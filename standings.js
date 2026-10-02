@@ -208,8 +208,10 @@ export function applySave(games, teams, request, nowIso) {
       by: request.by,
     });
     const key = gameKey(g.a, g.b, g.tier);
+    const prev = next.get(key);
     if (item.ga === null && item.gb === null) next.delete(key);
-    else next.set(key, g);
+    // 이미 있던 판이면 그 판을 한 선수 이름을 지킨다(선수 교체 뒤 점수를 고쳐도 기록이 옮겨 가지 않게).
+    else next.set(key, prev ? { ...g, pa: prev.pa || g.pa, pb: prev.pb || g.pb } : g);
   }
   return [...next.values()];
 }
@@ -230,7 +232,8 @@ export function computePlayerStats(teams, games) {
       if (name) ensure(name, t.no);
     }
     for (const g of uniqueGames(games)) {
-      if (g.tier !== tier || g.a === g.b) continue;
+      // 팀 순위·경기표와 같은 판만 센다(명단에 없는 팀과의 판은 뺀다).
+      if (g.tier !== tier || g.a === g.b || !team(g.a) || !team(g.b)) continue;
       const nameA = g.pa || team(g.a)?.players[tier - 1];
       const nameB = g.pb || team(g.b)?.players[tier - 1];
       if (nameA) addResult(ensure(nameA, g.a), g.ga, g.gb);

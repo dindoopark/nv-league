@@ -273,3 +273,43 @@ test('개인 기록은 티어별로 모든 명단 선수를 넣고 판 결과를
   assert.equal(stats[2].length, 9);
   assert.equal(stats[3].length, 9);
 });
+
+test('applySave는 선수가 바뀐 뒤 예전 판을 고쳐도 그 판의 선수 이름을 지킨다', () => {
+  const teamsAfterSwap = TEAMS.map((t) => (t.no === 1 ? { ...t, players: ['대타', t.players[1], t.players[2]] } : t));
+  const next = applySave(
+    [game(1, 2, 1, 3, 0)],
+    teamsAfterSwap,
+    { a: 2, b: 1, by: '범수', games: [{ tier: 1, ga: 1, gb: 3 }, { tier: 2, ga: 0, gb: 0 }] },
+    '2026-10-02T00:00:00.000Z',
+  );
+  const byTier = Object.fromEntries(next.map((g) => [g.tier, [g.a, g.b, g.ga, g.gb, g.pa, g.pb]]));
+  assert.deepEqual(byTier[1], [1, 2, 3, 1, '스톰', '범수']);
+  assert.deepEqual(byTier[2], [1, 2, 0, 0, '자본', '하늘']);
+});
+
+test('명단에 없는 팀·잘못된 티어·같은 팀끼리의 판은 경기표와 개인 기록에서도 무시한다', () => {
+  const bad = [
+    { a: 1, b: 12, tier: 1, ga: 5, gb: 0, pa: '스톰', pb: '유령' },
+    { a: 1, b: 2, tier: 4, ga: 5, gb: 0, pa: '스톰', pb: '범수' },
+    { a: 3, b: 3, tier: 1, ga: 5, gb: 0, pa: '병희', pb: '병희' },
+  ];
+  const cells = computeMatrix(TEAMS, bad);
+  assert.ok(TEAMS.every((t) => Object.keys(cells[t.no]).length === 0));
+  const stats = computePlayerStats(TEAMS, bad);
+  assert.equal(stats[1].length, 9);
+  assert.ok(stats[1].every((p) => p.w + p.d + p.l === 0));
+  assert.equal(computeTeamStandings(TEAMS, bad).recordedGames, 0);
+});
+
+test('개인 기록은 승점 → 골득실 → 다득점 순으로 정렬하고, 셋 다 같으면 공동 순위', () => {
+  const stats = computePlayerStats(TEAMS, [
+    game(1, 2, 1, 3, 0),
+    game(3, 4, 1, 1, 0),
+    game(5, 6, 1, 2, 1),
+    game(7, 8, 1, 2, 1),
+  ]);
+  assert.deepEqual(
+    stats[1].map((p) => [p.name, p.rank]),
+    [['스톰', 1], ['레오', 2], ['우설', 2], ['병희', 4], ['뚝배기', 5], ['크카모', 6], ['하지', 6], ['태현', 8], ['범수', 9]],
+  );
+});

@@ -222,7 +222,7 @@ main {
   margin: 10px 0 0;
 }
 
-.empty {
+p.empty {
   text-align: center;
   color: var(--muted);
   padding: 40px 0;
@@ -265,6 +265,10 @@ thead th {
   font-weight: 600;
 }
 
+thead th.left {
+  text-align: left;
+}
+
 tbody tr:last-child td {
   border-bottom: 0;
 }
@@ -279,6 +283,7 @@ td.team {
   display: block;
   font-size: 12px;
   color: var(--muted);
+  word-break: keep-all; /* 닉네임 중간에서 줄이 바뀌지 않게 */
 }
 
 td.pts {
@@ -311,18 +316,34 @@ tr.leader td {
   color: var(--warn-text);
 }
 
+/* 폰 폭에서는 칸 여백을 줄여 표가 한 화면에 들어오게 한다. */
+@media (max-width: 420px) {
+  th,
+  td {
+    padding: 7px 3px;
+  }
+
+  td.team {
+    min-width: 5.5em;
+  }
+
+  td.rank {
+    width: 2.2em;
+  }
+}
+
 /* 경기표 */
 
 .matrix th,
 .matrix td {
-  padding: 2px;
+  padding: 1px;
   border-bottom: 0;
 }
 
 .matrix th[scope='row'] {
   text-align: left;
-  font-size: 13px;
-  padding-right: 6px;
+  font-size: 12.5px;
+  padding-right: 5px;
 }
 
 .matrix td.self {
@@ -332,8 +353,9 @@ tr.leader td {
 
 .cell {
   width: 100%;
-  min-width: 31px;
+  min-width: 29px;
   height: 40px;
+  padding: 0;
   border: 0;
   border-radius: 8px;
   font: inherit;
@@ -355,7 +377,7 @@ tr.leader td {
   opacity: 0.8;
 }
 
-.cell.empty {
+.cell.blank {
   background: transparent;
   border: 1px dashed var(--line);
   color: var(--muted);
@@ -388,6 +410,7 @@ tr.leader td {
 select,
 input {
   font: inherit;
+  font-size: 16px; /* 16px보다 작으면 아이폰이 누를 때 화면을 확대한다 */
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--line);

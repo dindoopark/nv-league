@@ -24,7 +24,9 @@ const state = {
   loadError: '',
   loadedAt: 0,
   tab: 'standings',
+  dataGen: 0, // 데이터를 바꿀 때마다 올린다. 늦게 도착한 옛 불러오기 결과를 버리는 데 쓴다.
   pick: { a: 1, b: 2 },
+  formBase: null, // 입력칸을 채울 때 쓴 판 { a, b, games }. 저장할 때 이것과 비교해 바뀐 판만 보낸다.
   formDirty: false,
   saving: false,
   pin: '',
@@ -81,10 +83,11 @@ function readCache() {
 function formatTime(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
+  // 예: 10월 2일 오후 4:38
   return d.toLocaleString('ko-KR', {
-    month: 'numeric',
+    month: 'long',
     day: 'numeric',
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
     timeZone: 'Asia/Seoul',
   });
@@ -98,6 +101,7 @@ const teamOf = (no) => state.data.teams.find((t) => t.no === no);
 async function load() {
   if (state.loading) return;
   state.loading = true;
+  const gen = ++state.dataGen;
   render();
   try {
     if (DEMO) {
@@ -105,19 +109,39 @@ async function load() {
     } else {
       const res = await fetch(`${API_URL}?action=data`, { cache: 'no-store' });
       const body = await res.json();
-      if (!body.ok) throw new Error(body.message || '불러오기 실패');
-      state.data = body.data;
-      storageSet(CACHE_KEY, JSON.stringify(body.data));
+      if (!body.ok) throw Object.assign(new Error(body.message || ''), { fromServer: true });
+      // 불러오는 사이 저장이 끝났다면 저장 응답이 더 새 데이터이므로 이 결과는 버린다.
+      if (gen === state.dataGen) {
+        warnIfMatchChanged(body.data);
+        state.data = body.data;
+        storageSet(CACHE_KEY, JSON.stringify(body.data));
+      }
     }
     state.loadError = '';
     state.loadedAt = Date.now();
-  } catch {
+  } catch (err) {
     state.data ??= readCache();
-    state.loadError = '최신 결과를 불러오지 못했습니다.';
+    const reason = err?.fromServer && err.message ? ` ${err.message}` : '';
+    state.loadError = `최신 결과를 불러오지 못했습니다.${reason}`;
   } finally {
     state.loading = false;
   }
   render();
+}
+
+function sameScores(x, y) {
+  return TIERS.every((t) => (x[t]?.ga ?? null) === (y[t]?.ga ?? null) && (x[t]?.gb ?? null) === (y[t]?.gb ?? null));
+}
+
+// 점수를 입력하는 도중 새로 받은 데이터에서 그 경기가 바뀌었으면 알려 준다(입력칸은 그대로 둔다).
+function warnIfMatchChanged(nextData) {
+  const base = state.formBase;
+  if (state.tab !== 'input' || !state.formDirty || !base) return;
+  if (sameScores(gamesBetween(nextData.games, base.a, base.b), base.games)) return;
+  showNotice(
+    'info',
+    '그사이 다른 기기에서 이 경기 결과가 바뀌었습니다. 저장하면 내가 고친 판만 바뀌고, 나머지 판은 새 결과가 그대로 남습니다.',
+  );
 }
 
 // --- 그리기 ---
@@ -162,8 +186,13 @@ function render() {
   view.replaceChildren(...panel[state.tab]());
 }
 
+// 두 번째 열(팀·선수)만 왼쪽 정렬
 function headRow(labels) {
-  return el('thead', {}, el('tr', {}, labels.map((label) => el('th', { scope: 'col' }, label))));
+  return el(
+    'thead',
+    {},
+    el('tr', {}, labels.map((label, i) => el('th', { scope: 'col', class: i === 1 ? 'left' : null }, label))),
+  );
 }
 
 function renderStandings() {
@@ -247,7 +276,7 @@ function renderMatrix() {
           return el(
             'td',
             {},
-            el('button', { type: 'button', class: 'cell empty', 'aria-label': `${label} 결과 입력`, onclick: open }, '·'),
+            el('button', { type: 'button', class: 'cell blank', 'aria-label': `${label} 결과 입력`, onclick: open }, '·'),
           );
         }
         const outcome = c.pts > c.oppPts ? 'win' : c.pts < c.oppPts ? 'loss' : 'draw';
@@ -347,11 +376,14 @@ function renderInput() {
   const teamB = teamOf(b);
   const sameTeam = a === b;
   const existing = sameTeam ? null : gamesBetween(games, a, b);
+  // 입력칸이 이 값으로 채워진다. 저장할 때 이것과 비교하므로, 그사이 새로 받은 데이터 때문에
+  // 손대지 않은 판이 지워지거나 되돌아가지 않는다.
+  state.formBase = existing ? { a, b, games: existing } : null;
 
   const teamSelect = (side, value) =>
     el(
       'select',
-      { name: side, 'aria-label': side === 'a' ? '팀 A' : '팀 B', onchange: onPickChange },
+      { name: side, 'aria-label': side === 'a' ? '팀 A' : '팀 B', onchange: onPickChange, disabled: state.saving },
       teams.map((t) => el('option', { value: t.no, selected: t.no === value }, `${t.name} (${t.players.join('·')})`)),
     );
 
@@ -453,9 +485,12 @@ function openInput(a, b) {
   }
 }
 
+// 한쪽을 상대 팀과 같은 팀으로 고르면 두 팀 자리를 바꾼다.
 function onPickChange(event) {
-  const form = event.target.form;
-  state.pick = { a: Number(form.elements.a.value), b: Number(form.elements.b.value) };
+  const value = Number(event.target.value);
+  const { a, b } = state.pick;
+  if (event.target.name === 'a') state.pick = value === b ? { a: value, b: a } : { a: value, b };
+  else state.pick = value === a ? { a: b, b: value } : { a, b: value };
   state.formDirty = false;
   state.notice = null;
   render();
@@ -472,6 +507,16 @@ function setSaving(form, saving) {
   const button = form.querySelector('button[type="submit"]');
   button.disabled = saving;
   button.textContent = saving ? '저장 중…' : '저장';
+  for (const select of form.querySelectorAll('select[name="a"], select[name="b"]')) select.disabled = saving;
+}
+
+// 저장 실패 처리. 저장하는 사이 화면이 다시 그려졌으면(탭 이동 등) 지금 보이는 폼을 풀어 준다.
+function saveFailed(submittedForm, message) {
+  state.saving = false;
+  const live = view.querySelector('form.input-form');
+  if (live) setSaving(live, false);
+  const kept = live === submittedForm;
+  showNotice('error', kept ? message : `${message} 점수를 다시 넣어 주세요.`);
 }
 
 async function onSave(event) {
@@ -484,7 +529,9 @@ async function onSave(event) {
   const inputs = Object.fromEntries(
     TIERS.map((t) => [t, { ga: form.elements[`ga${t}`].value, gb: form.elements[`gb${t}`].value }]),
   );
-  const { games, errors } = buildSaveGames(gamesBetween(state.data.games, a, b), inputs);
+  const base =
+    state.formBase?.a === a && state.formBase?.b === b ? state.formBase.games : gamesBetween(state.data.games, a, b);
+  const { games, errors } = buildSaveGames(base, inputs);
   const by = form.elements.by.value;
   const pin = form.elements.pin.value.trim();
   if (errors.length) {
@@ -521,10 +568,10 @@ async function onSave(event) {
       });
       const body = await res.json();
       if (!body.ok) {
-        setSaving(form, false);
-        showNotice('error', body.message || '저장하지 못했습니다.');
+        saveFailed(form, body.message || '저장하지 못했습니다.');
         return;
       }
+      state.dataGen += 1; // 저장 전에 시작된 불러오기 결과가 이 데이터를 덮지 않게
       state.data = body.data;
       storageSet(CACHE_KEY, JSON.stringify(body.data));
       state.loadError = '';
@@ -538,8 +585,7 @@ async function onSave(event) {
       : { kind: 'info', text: '이미 같은 점수로 저장돼 있습니다.' };
     render();
   } catch {
-    setSaving(form, false);
-    showNotice('error', '연결에 실패했습니다. 입력한 점수는 그대로 있으니 다시 저장해 주세요.');
+    saveFailed(form, '연결에 실패했습니다. 다시 저장해 주세요.');
   }
 }
 

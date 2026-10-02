@@ -14,8 +14,9 @@ var MAX_GOALS = 30;
 var ADMIN = '운영진';
 var RESULT_COLS = 9;
 var LOG_COLS = 7;
-var MAX_PIN_FAILS = 30;
+var MAX_PIN_FAILS = 30; // 10분 창 안에서 이만큼 틀리면
 var PIN_FAIL_WINDOW_SEC = 600;
+var PIN_LOCK_SEC = 600; // 이 시간 동안 저장을 막는다
 
 // 적힌 순서 = 1·2·3티어
 var ROSTER = [
@@ -30,20 +31,25 @@ var ROSTER = [
   ['뚝배기', '치노', '수프러차']
 ];
 
-// --- 처음 한 번 실행 ---
+// --- 처음 한 번 실행 (다시 실행해도 안전) ---
 
 function setup() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var teams = ensureSheet_(ss, SHEET_TEAMS, ['팀번호', '팀이름', '1티어', '2티어', '3티어']);
+  // 닉네임·팀이름이 숫자나 날짜로 바뀌지 않게 글자 서식
+  teams.getRange('B:E').setNumberFormat('@');
   if (teams.getLastRow() < 2) {
     var rows = ROSTER.map(function (players, i) {
       return [i + 1, (i + 1) + '팀', players[0], players[1], players[2]];
     });
     teams.getRange(2, 1, rows.length, 5).setValues(rows);
   }
-  ensureSheet_(ss, SHEET_RESULTS, ['팀A', '팀B', '티어', 'A득점', 'B득점', 'A선수', 'B선수', '수정시각', '입력자']);
+  var results = ensureSheet_(ss, SHEET_RESULTS, ['팀A', '팀B', '티어', 'A득점', 'B득점', 'A선수', 'B선수', '수정시각', '입력자']);
+  results.getRange('F:G').setNumberFormat('@');
+  results.getRange('I:I').setNumberFormat('@');
   var log = ensureSheet_(ss, SHEET_LOG, ['시각', '입력자', '팀A', '팀B', '티어', '이전', '이후']);
-  log.getRange('F:G').setNumberFormat('@'); // "3:1"이 시각으로 바뀌지 않게 글자 서식
+  log.getRange('B:B').setNumberFormat('@');
+  log.getRange('F:G').setNumberFormat('@'); // "3:1"이 시각으로 바뀌지 않게
   var settings = ensureSheet_(ss, SHEET_SETTINGS, ['항목', '값']);
   if (settings.getLastRow() < 2) {
     settings.getRange(2, 1, 1, 2).setValues([['결정전 승자 팀 번호', '']]);
@@ -83,7 +89,10 @@ function handleGet_(e) {
   var action = (e && e.parameter && e.parameter.action) || 'data';
   if (action !== 'data') return fail_('INVALID', '알 수 없는 요청입니다.');
   try {
-    return { ok: true, data: readData_(SpreadsheetApp.getActiveSpreadsheet()) };
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var missing = missingTabs_(ss, [SHEET_TEAMS, SHEET_RESULTS]);
+    if (missing.length) return fail_('SETUP', tabMessage_(missing));
+    return { ok: true, data: readData_(ss) };
   } catch (err) {
     return fail_('SERVER', '불러오기 중 오류가 났습니다: ' + errorText_(err));
   }
@@ -98,7 +107,7 @@ function handlePost_(e, now) {
   }
   if (!req || req.action !== 'save') return fail_('INVALID', '알 수 없는 요청입니다.');
 
-  var pinError = checkPin_(req.pin);
+  var pinError = checkPin_(req.pin, now);
   if (pinError) return pinError;
 
   var lock = LockService.getScriptLock();
@@ -118,26 +127,44 @@ function handlePost_(e, now) {
 
 // --- 비밀번호 ---
 
-function checkPin_(pin) {
+// 틀린 비밀번호는 첫 실패부터 10분 창 안에서 센다. 30번이 되면 그때부터 10분 동안 저장을 막는다.
+function checkPin_(pin, now) {
   var saved = PropertiesService.getScriptProperties().getProperty('PIN');
   if (!saved || !String(saved).trim()) {
     return fail_('SETUP', '비밀번호(PIN)가 아직 설정되지 않았습니다. 운영자에게 알려 주세요.');
   }
   var cache = CacheService.getScriptCache();
-  var fails = Number(cache.get('pinFails') || 0);
-  if (fails >= MAX_PIN_FAILS) {
+  var fails = readPinFails_(cache);
+  if (fails.n >= MAX_PIN_FAILS) {
     return fail_('LOCKED', '비밀번호가 여러 번 틀려 잠시 저장을 막았습니다. 10분 뒤 다시 시도해 주세요.');
   }
-  if (String(pin == null ? '' : pin).trim() !== String(saved).trim()) {
-    cache.put('pinFails', String(fails + 1), PIN_FAIL_WINDOW_SEC);
-    return fail_('PIN', '비밀번호가 맞지 않습니다.');
+  if (String(pin == null ? '' : pin).trim() === String(saved).trim()) return null;
+
+  var nowMs = now.getTime();
+  if (!fails.since || nowMs - fails.since >= PIN_FAIL_WINDOW_SEC * 1000) fails = { n: 0, since: nowMs };
+  fails.n += 1;
+  var ttl =
+    fails.n >= MAX_PIN_FAILS ? PIN_LOCK_SEC : Math.ceil((fails.since + PIN_FAIL_WINDOW_SEC * 1000 - nowMs) / 1000);
+  cache.put('pinFails', JSON.stringify(fails), Math.max(1, ttl));
+  return fail_('PIN', '비밀번호가 맞지 않습니다.');
+}
+
+function readPinFails_(cache) {
+  try {
+    var v = JSON.parse(cache.get('pinFails') || 'null');
+    if (v && typeof v.n === 'number' && typeof v.since === 'number') return v;
+  } catch (err) {
+    // 형식이 이상하면 처음부터 센다.
   }
-  return null;
+  return { n: 0, since: 0 };
 }
 
 // --- 저장 ---
 
 function save_(ss, req, now) {
+  var missing = missingTabs_(ss, [SHEET_TEAMS, SHEET_RESULTS, SHEET_LOG]);
+  if (missing.length) return fail_('SETUP', tabMessage_(missing));
+
   var teams = readTeams_(ss);
   var a = Number(req.a);
   var b = Number(req.b);
@@ -177,31 +204,60 @@ function save_(ss, req, now) {
   var hi = swap ? teamA : teamB;
 
   var sheet = ss.getSheetByName(SHEET_RESULTS);
-  var rows = readResultRows_(sheet);
+  var entries = readResultRows_(sheet);
+  var updates = [];
+  var appends = [];
+  var deletes = [];
   var logRows = [];
   edits.forEach(function (ed) {
-    var idx = findResultRow_(rows, lo.no, hi.no, ed.tier);
-    var before = idx >= 0 ? rows[idx][3] + ':' + rows[idx][4] : '';
+    // 운영자가 직접 넣은 뒤집힌 줄(큰 팀이 앞)·중복 줄도 같은 판으로 본다.
+    var matches = entries.filter(function (en) {
+      return sameGame_(en.values, lo.no, hi.no, ed.tier);
+    });
+    // 화면에 보이는 것은 형식이 맞는 줄 중 마지막 줄이다(standings.js uniqueGames와 같은 규칙).
+    var visible = matches.filter(function (en) {
+      return toGame_(en.values);
+    });
+    var shownEntry = visible.length ? visible[visible.length - 1] : null;
+    var shown = shownEntry ? orient_(shownEntry.values, lo.no) : null;
+    var before = shown ? shown.ga + ':' + shown.gb : '';
+
     if (ed.remove) {
-      if (idx < 0) return;
-      rows.splice(idx, 1);
-      logRows.push([now, by, lo.no, hi.no, ed.tier, before, '삭제']);
+      if (!matches.length) return;
+      matches.forEach(function (en) {
+        deletes.push(en.row);
+      });
+      logRows.push([now, by, lo.no, hi.no, ed.tier, before || '(없음)', '삭제']);
       return;
     }
+
     var goalsLo = swap ? ed.gb : ed.ga;
     var goalsHi = swap ? ed.ga : ed.gb;
-    var after = goalsLo + ':' + goalsHi;
-    if (before === after) return;
-    var row = [lo.no, hi.no, ed.tier, goalsLo, goalsHi, lo.players[ed.tier - 1], hi.players[ed.tier - 1], now, by];
-    if (idx >= 0) rows[idx] = row;
-    else rows.push(row);
-    logRows.push([now, by, lo.no, hi.no, ed.tier, before || '(없음)', after]);
+    if (shown && cellGoal_(shown.ga) === goalsLo && cellGoal_(shown.gb) === goalsHi) return;
+    // 이미 있던 판이면 그 판을 한 선수 이름을 지킨다(선수 교체 뒤 점수를 고쳐도 기록이 옮겨 가지 않게).
+    var nameLo = (shown && shown.pa) || lo.players[ed.tier - 1];
+    var nameHi = (shown && shown.pb) || hi.players[ed.tier - 1];
+    var values = [lo.no, hi.no, ed.tier, goalsLo, goalsHi, nameLo, nameHi, now, by];
+    var target = shownEntry || (matches.length ? matches[matches.length - 1] : null);
+    if (target) {
+      updates.push({ row: target.row, values: values });
+      matches.forEach(function (en) {
+        if (en !== target) deletes.push(en.row);
+      });
+    } else {
+      appends.push(values);
+    }
+    logRows.push([now, by, lo.no, hi.no, ed.tier, before || '(없음)', goalsLo + ':' + goalsHi]);
   });
 
   if (logRows.length > 0) {
-    writeResultRows_(sheet, rows);
-    var logSheet = ss.getSheetByName(SHEET_LOG);
-    logSheet.getRange(logSheet.getLastRow() + 1, 1, logRows.length, LOG_COLS).setValues(logRows);
+    // 다른 판의 줄은 그 자리에 둔다(운영자가 붙인 색·메모가 엉뚱한 판으로 옮겨 가지 않게).
+    updates.forEach(function (u) {
+      sheet.getRange(u.row, 1, 1, RESULT_COLS).setValues([u.values]);
+    });
+    appendRows_(sheet, appends);
+    deleteRows_(sheet, deletes);
+    appendRows_(ss.getSheetByName(SHEET_LOG), logRows);
   }
   return { ok: true, changed: logRows.length, data: readData_(ss) };
 }
@@ -210,7 +266,9 @@ function save_(ss, req, now) {
 
 function readData_(ss) {
   var games = readResultRows_(ss.getSheetByName(SHEET_RESULTS))
-    .map(toGame_)
+    .map(function (en) {
+      return toGame_(en.values);
+    })
     .filter(function (g) {
       return g;
     });
@@ -246,45 +304,97 @@ function readTeams_(ss) {
     });
 }
 
-// 빈 줄을 뺀 결과 탭의 원본 줄. 운영자가 넣은 이상한 줄도 지우지 않도록 그대로 둔다.
+// 결과 탭에서 빈 줄이 아닌 줄을 시트 줄 번호와 함께 돌려준다. 운영자가 넣은 이상한 줄도 지우지 않는다.
 function readResultRows_(sheet) {
   var last = sheet.getLastRow();
   if (last < 2) return [];
   return sheet
     .getRange(2, 1, last - 1, RESULT_COLS)
     .getValues()
-    .filter(function (r) {
-      return r.some(function (v) {
+    .map(function (values, i) {
+      return { row: i + 2, values: values };
+    })
+    .filter(function (en) {
+      return en.values.some(function (v) {
         return v !== '' && v !== null;
       });
     });
 }
 
-function writeResultRows_(sheet, rows) {
-  rows.sort(function (x, y) {
-    return Number(x[0]) - Number(y[0]) || Number(x[1]) - Number(y[1]) || Number(x[2]) - Number(y[2]);
-  });
-  var last = sheet.getLastRow();
-  if (last >= 2) sheet.getRange(2, 1, last - 1, RESULT_COLS).clearContent();
-  if (rows.length > 0) sheet.getRange(2, 1, rows.length, RESULT_COLS).setValues(rows);
+// 맨 아래에 줄을 붙인다. 시트 줄이 모자라면 먼저 늘린다.
+function appendRows_(sheet, rows) {
+  if (!rows.length) return;
+  var start = sheet.getLastRow() + 1;
+  var need = start + rows.length - 1 - sheet.getMaxRows();
+  if (need > 0) sheet.insertRowsAfter(sheet.getMaxRows(), need);
+  sheet.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
+}
+
+// 아래 줄부터 지운다. 고정되지 않은 줄이 하나도 안 남으면 시트가 오류를 내므로 빈 줄을 하나 남긴다.
+function deleteRows_(sheet, rowNumbers) {
+  if (!rowNumbers.length) return;
+  if (sheet.getMaxRows() <= sheet.getLastRow()) sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+  rowNumbers
+    .slice()
+    .sort(function (x, y) {
+      return y - x;
+    })
+    .forEach(function (row) {
+      sheet.deleteRow(row);
+    });
 }
 
 function toGame_(r) {
   var a = Number(r[0]);
   var b = Number(r[1]);
   var tier = Number(r[2]);
-  if (!(a >= 1) || !(b >= 1) || a === b || TIERS.indexOf(tier) < 0 || !isGoal_(r[3]) || !isGoal_(r[4])) return null;
+  var ga = cellGoal_(r[3]);
+  var gb = cellGoal_(r[4]);
+  if (!isTeamNo_(a) || !isTeamNo_(b) || a === b || TIERS.indexOf(tier) < 0 || !isGoal_(ga) || !isGoal_(gb)) {
+    return null;
+  }
   return {
     a: a,
     b: b,
     tier: tier,
-    ga: r[3],
-    gb: r[4],
-    pa: String(r[5]),
-    pb: String(r[6]),
+    ga: ga,
+    gb: gb,
+    pa: String(r[5]).trim(),
+    pb: String(r[6]).trim(),
     at: toIso_(r[7]),
-    by: String(r[8])
+    by: String(r[8]).trim()
   };
+}
+
+// 결과 줄이 (lo, hi, tier) 판인지. 큰 팀이 앞에 적힌 줄도 같은 판으로 본다.
+function sameGame_(r, lo, hi, tier) {
+  var a = Number(r[0]);
+  var b = Number(r[1]);
+  return Number(r[2]) === tier && ((a === lo && b === hi) || (a === hi && b === lo));
+}
+
+// 결과 줄을 lo 팀 기준 { ga, gb, pa, pb }로 돌려 읽는다.
+function orient_(r, lo) {
+  var flip = Number(r[0]) !== lo;
+  return {
+    ga: flip ? r[4] : r[3],
+    gb: flip ? r[3] : r[4],
+    pa: String(flip ? r[6] : r[5]).trim(),
+    pb: String(flip ? r[5] : r[6]).trim()
+  };
+}
+
+function missingTabs_(ss, names) {
+  return names.filter(function (name) {
+    return !ss.getSheetByName(name);
+  });
+}
+
+function tabMessage_(missing) {
+  var names = missing.map(function (name) {
+    return '"' + name + '"';
+  });
+  return '구글 시트에 ' + names.join(', ') + ' 탭이 없습니다. 탭 이름을 바꾸거나 지우지 마세요.';
 }
 
 function findTeam_(teams, no) {
@@ -294,17 +404,21 @@ function findTeam_(teams, no) {
   return null;
 }
 
-function findResultRow_(rows, a, b, tier) {
-  for (var i = 0; i < rows.length; i++) {
-    if (Number(rows[i][0]) === a && Number(rows[i][1]) === b && Number(rows[i][2]) === tier) return i;
-  }
-  return -1;
-}
-
 // --- 작은 도우미 ---
+
+// 칸 값 → 점수. 운영자가 글자 서식 칸에 적은 "3"도 숫자로 읽는다. 아니면 NaN.
+function cellGoal_(v) {
+  if (typeof v === 'number') return v;
+  var s = String(v == null ? '' : v).trim();
+  return /^[0-9]+$/.test(s) ? Number(s) : NaN;
+}
 
 function isGoal_(v) {
   return typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= 0 && v <= MAX_GOALS;
+}
+
+function isTeamNo_(n) {
+  return n >= 1 && Math.floor(n) === n;
 }
 
 function toIso_(v) {
