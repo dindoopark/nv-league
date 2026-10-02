@@ -205,8 +205,8 @@ test('setup은 탭 4개를 만들고 명단을 채우며, 다시 실행해도 �
   assert.equal(teams.getLastRow(), 10);
   assert.equal(teams.frozen, 1);
   assert.deepEqual(plain(teams.rows[0]), ['팀번호', '팀이름', '1티어', '2티어', '3티어']);
-  assert.deepEqual(plain(teams.rows[1]), [1, '1팀', '스톰', '자본', '현우']);
-  assert.deepEqual(plain(teams.rows[9]), [9, '9팀', '뚝배기', '치노', '수프러차']);
+  assert.deepEqual(plain(teams.rows[1]), [1, '시그니엘', '스톰', '자본', '현우']);
+  assert.deepEqual(plain(teams.rows[9]), [9, '대갈장군', '뚝배기', '치노', '수프러차']);
   assert.ok(sheet(env, '기록').formats.some(([range, fmt]) => range === 'F:G' && fmt === '@'));
   assert.deepEqual(plain(sheet(env, '설정').rows[1]), ['결정전 승자 팀 번호', '']);
 });
@@ -218,7 +218,7 @@ test('doGet은 팀 9개와 빈 결과를 JSON으로 돌려준다', () => {
   const body = JSON.parse(out.getContent());
   assert.equal(body.ok, true);
   assert.equal(body.data.teams.length, 9);
-  assert.deepEqual(body.data.teams[8], { no: 9, name: '9팀', players: ['뚝배기', '치노', '수프러차'] });
+  assert.deepEqual(body.data.teams[8], { no: 9, name: '대갈장군', players: ['뚝배기', '치노', '수프러차'] });
   assert.deepEqual(body.data.games, []);
   assert.deepEqual(body.data.settings, { playoffWinner: null });
   assert.equal(typeof body.data.serverTime, 'string');
