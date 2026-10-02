@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const CODE = readFileSync(new URL('../apps-script/Code.gs', import.meta.url), 'utf8');
-const PIN = 'nv2468';
+const PIN = 'test-only-pin'; // 시험용. 실제 비밀번호로 쓰지 마세요
 const NOW = new Date('2026-10-02T12:00:00Z');
 
 // --- 구글 시트 흉내 ---
