@@ -1,0 +1,10 @@
+{
+  "name": "nv-league",
+  "private": true,
+  "type": "module",
+  "description": "FC Online 클럽 NV 내전 팀리그 순위표",
+  "scripts": {
+    "test": "node --test",
+    "serve": "node tools/serve.mjs"
+  }
+}
