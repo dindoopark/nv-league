@@ -485,3 +485,15 @@ test('탭 이름이 바뀌면 그 탭 이름을 알려 주고, 저장은 아무�
   assert.equal(got.error, 'SETUP');
   assert.match(got.message, /"결과"/);
 });
+
+test('글자로 적힌 점수를 고치거나 지울 때 기록에는 화면과 같은 점수로 남는다', () => {
+  const env = ready();
+  const results = sheet(env, '결과');
+  results.getRange('D:E').setNumberFormat('@');
+  results.getRange(2, 1, 1, 9).setValues([[1, 2, 1, ' 03', '1 ', '스톰', '범수', '', '운영진']]);
+  post(env, { ...base, games: [{ tier: 1, ga: 4, gb: 1 }] });
+  assert.deepEqual(plain(sheet(env, '기록').rows[1]).slice(5), ['3:1', '4:1']);
+  results.getRange(2, 1, 1, 9).setValues([[1, 2, 1, ' 03', '1 ', '스톰', '범수', '', '운영진']]);
+  post(env, { ...base, games: [{ tier: 1, ga: null, gb: null }] });
+  assert.deepEqual(plain(sheet(env, '기록').rows[2]).slice(5), ['3:1', '삭제']);
+});

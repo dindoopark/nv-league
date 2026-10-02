@@ -134,14 +134,16 @@ function sameScores(x, y) {
 }
 
 // 점수를 입력하는 도중 새로 받은 데이터에서 그 경기가 바뀌었으면 알려 준다(입력칸은 그대로 둔다).
+// 내가 저장하는 중에는 바뀐 것이 내 저장일 수 있으므로 알리지 않는다.
 function warnIfMatchChanged(nextData) {
   const base = state.formBase;
-  if (state.tab !== 'input' || !state.formDirty || !base) return;
+  if (state.tab !== 'input' || !state.formDirty || state.saving || !base) return;
   if (sameScores(gamesBetween(nextData.games, base.a, base.b), base.games)) return;
   showNotice(
     'info',
     '그사이 다른 기기에서 이 경기 결과가 바뀌었습니다. 저장하면 내가 고친 판만 바뀌고, 나머지 판은 새 결과가 그대로 남습니다.',
   );
+  state.notice.matchChanged = true; // 입력칸을 새 데이터로 다시 그리면 지운다
 }
 
 // --- 그리기 ---
@@ -370,6 +372,8 @@ function renderInput() {
     return [el('p', { class: 'empty' }, '팀 명단이 없습니다. 구글 시트 팀 탭을 확인해 주세요.')];
   }
   fixPick();
+  // 입력칸을 최신 데이터로 새로 채우므로 "그사이 바뀌었습니다" 알림은 더 이상 맞지 않다.
+  if (state.notice?.matchChanged) state.notice = null;
   const { teams, games } = state.data;
   const { a, b } = state.pick;
   const teamA = teamOf(a);
@@ -510,13 +514,14 @@ function setSaving(form, saving) {
   for (const select of form.querySelectorAll('select[name="a"], select[name="b"]')) select.disabled = saving;
 }
 
-// 저장 실패 처리. 저장하는 사이 화면이 다시 그려졌으면(탭 이동 등) 지금 보이는 폼을 풀어 준다.
-function saveFailed(submittedForm, message) {
+// 저장 실패 처리. 저장하는 사이 화면이 다시 그려졌으면(탭 이동, 다른 경기 열기) 지금 보이는 폼을 풀어 주고,
+// 입력값이 사라졌으니 어느 경기가 실패했는지 알려 준다.
+function saveFailed(submittedForm, message, pairLabel, retryHint = false) {
   state.saving = false;
   const live = view.querySelector('form.input-form');
   if (live) setSaving(live, false);
-  const kept = live === submittedForm;
-  showNotice('error', kept ? message : `${message} 점수를 다시 넣어 주세요.`);
+  if (live === submittedForm) showNotice('error', retryHint ? `${message} 다시 저장해 주세요.` : message);
+  else showNotice('error', `${pairLabel} 결과를 저장하지 못했습니다. ${message} 그 경기를 다시 열어 점수를 넣어 주세요.`);
 }
 
 async function onSave(event) {
@@ -553,6 +558,7 @@ async function onSave(event) {
 
   storageSet(BY_KEY, by);
   state.pin = pin;
+  const pairLabel = `${teamOf(a).name} 대 ${teamOf(b).name}`;
   setSaving(form, true);
   showNotice('info', '저장 중…');
   try {
@@ -568,7 +574,7 @@ async function onSave(event) {
       });
       const body = await res.json();
       if (!body.ok) {
-        saveFailed(form, body.message || '저장하지 못했습니다.');
+        saveFailed(form, body.message || '저장하지 못했습니다.', pairLabel);
         return;
       }
       state.dataGen += 1; // 저장 전에 시작된 불러오기 결과가 이 데이터를 덮지 않게
@@ -579,13 +585,19 @@ async function onSave(event) {
       changed = body.changed;
     }
     state.saving = false;
-    state.formDirty = false;
-    state.notice = changed
-      ? { kind: 'ok', text: `${changed}판 저장했습니다.${DEMO ? ' 데모 모드라 이 화면에만 반영됩니다.' : ''}` }
-      : { kind: 'info', text: '이미 같은 점수로 저장돼 있습니다.' };
+    // 저장하는 사이 다른 경기를 열었으면 그 폼의 입력은 건드리지 않고, 어느 경기를 저장했는지 붙여 알린다.
+    const samePair = state.pick.a === a && state.pick.b === b;
+    if (samePair) state.formDirty = false;
+    const prefix = samePair ? '' : `${pairLabel} `;
+    const notice = changed
+      ? { kind: 'ok', text: `${prefix}${changed}판 저장했습니다.${DEMO ? ' 데모 모드라 이 화면에만 반영됩니다.' : ''}` }
+      : { kind: 'info', text: `${prefix}이미 같은 점수로 저장돼 있습니다.` };
+    const live = view.querySelector('form.input-form');
+    if (live) setSaving(live, false);
+    showNotice(notice.kind, notice.text);
     render();
   } catch {
-    saveFailed(form, '연결에 실패했습니다. 다시 저장해 주세요.');
+    saveFailed(form, '연결에 실패했습니다.', pairLabel, true);
   }
 }
 

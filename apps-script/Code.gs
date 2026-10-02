@@ -233,7 +233,7 @@ function save_(ss, req, now) {
 
     var goalsLo = swap ? ed.gb : ed.ga;
     var goalsHi = swap ? ed.ga : ed.gb;
-    if (shown && cellGoal_(shown.ga) === goalsLo && cellGoal_(shown.gb) === goalsHi) return;
+    if (shown && shown.ga === goalsLo && shown.gb === goalsHi) return;
     // 이미 있던 판이면 그 판을 한 선수 이름을 지킨다(선수 교체 뒤 점수를 고쳐도 기록이 옮겨 가지 않게).
     var nameLo = (shown && shown.pa) || lo.players[ed.tier - 1];
     var nameHi = (shown && shown.pb) || hi.players[ed.tier - 1];
@@ -373,12 +373,12 @@ function sameGame_(r, lo, hi, tier) {
   return Number(r[2]) === tier && ((a === lo && b === hi) || (a === hi && b === lo));
 }
 
-// 결과 줄을 lo 팀 기준 { ga, gb, pa, pb }로 돌려 읽는다.
+// 결과 줄을 lo 팀 기준 { ga, gb, pa, pb }로 돌려 읽는다. 점수는 화면과 같은 숫자로 읽는다.
 function orient_(r, lo) {
   var flip = Number(r[0]) !== lo;
   return {
-    ga: flip ? r[4] : r[3],
-    gb: flip ? r[3] : r[4],
+    ga: cellGoal_(flip ? r[4] : r[3]),
+    gb: cellGoal_(flip ? r[3] : r[4]),
     pa: String(flip ? r[6] : r[5]).trim(),
     pb: String(flip ? r[5] : r[6]).trim()
   };
