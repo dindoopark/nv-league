@@ -89,11 +89,12 @@
 
 ### API
 
-- `GET ?action=data` → `{ ok, teams:[{no,name,players:[t1,t2,t3]}], games:[{a,b,tier,ga,gb,pa,pb,at,by}], settings:{playoffWinner}, serverTime }`
+- `GET ?action=data` → `{ ok: true, data: { teams:[{no,name,players:[t1,t2,t3]}], games:[{a,b,tier,ga,gb,pa,pb,at,by}], settings:{playoffWinner}, serverTime } }`
 - `POST` (본문은 `text/plain`의 JSON — CORS 사전 요청 회피)
   `{ action:"save", pin, by, a, b, games:[{tier, ga, gb}] }` (`ga`/`gb`가 둘 다 `null`이면 삭제 요청)
-  → 성공 `{ ok:true, data:<GET과 같은 형태> }`, 실패 `{ ok:false, error:"PIN"|"INVALID", message }`
-- 서버 검사: 비밀번호 일치 / 팀 번호 1~9이고 서로 다름 / 티어 1~3 / 점수 0~30 정수 / 입력자가 그 경기 6명 중 1명 또는 "운영진". `a > b`로 오면 팀과 점수를 함께 뒤집어 저장. 값이 그대로인 판은 기록하지 않음.
+  → 성공 `{ ok:true, changed, data }` (`data`는 GET과 같은 형태)
+  → 실패 `{ ok:false, error, message }`, `error`는 `PIN`(틀림) / `LOCKED`(10분 안에 30번 틀려 잠김) / `SETUP`(PIN 미설정) / `BUSY`(잠금 대기 초과) / `INVALID`(검증 실패) / `SERVER`
+- 서버 검사: 비밀번호 일치(앞뒤 공백 무시) / 팀 번호가 `팀` 탭에 있고 서로 다름 / 티어 1~3, 중복 없음 / 점수 0~30 정수 / 입력자가 그 경기 6명 중 1명 또는 "운영진". 하나라도 틀리면 아무것도 쓰지 않는다. `a > b`로 오면 팀과 점수를 함께 뒤집어 저장. 값이 그대로인 판은 기록하지 않음.
 - 동시 저장: `LockService`로 한 번에 하나씩 처리.
 
 ## 5. 오류 처리
