@@ -262,7 +262,7 @@ test('팀 번호가 큰 쪽이 A로 와도 작은 팀 기준으로 뒤집어 저
   assert.equal(res.ok, true);
   assert.equal(res.changed, 1);
   assert.deepEqual(res.data.games, [
-    { a: 1, b: 2, tier: 1, ga: 1, gb: 3, pa: '스톰', pb: '범수', at: '2026-10-02T12:00:00.000Z', by: '하지' },
+    { a: 1, b: 2, tier: 1, ga: 1, gb: 3, pa: '스톰', pb: '태현', at: '2026-10-02T12:00:00.000Z', by: '하지' },
   ]);
   assert.deepEqual(plain(sheet(env, '기록').rows[1]), ['2026-10-02T12:00:00.000Z', '하지', 1, 2, 1, '(없음)', '1:3']);
   assert.equal(env.lock.held, false);
@@ -425,7 +425,7 @@ test('선수를 바꾼 뒤 예전 판 점수를 고쳐도 그 판의 선수 이�
   sheet(env, '팀').getRange(2, 3).setValues([['대타']]);
   const res = post(env, { ...base, by: '하지', games: [{ tier: 1, ga: 3, gb: 1 }] });
   assert.equal(res.changed, 1);
-  assert.deepEqual(res.data.games.map((g) => [g.ga, g.gb, g.pa, g.pb]), [[3, 1, '스톰', '범수']]);
+  assert.deepEqual(res.data.games.map((g) => [g.ga, g.gb, g.pa, g.pb]), [[3, 1, '스톰', '태현']]);
 });
 
 test('운영자가 큰 팀 번호를 앞에 적은 줄도 페이지에서 고치고 지울 수 있다', () => {
