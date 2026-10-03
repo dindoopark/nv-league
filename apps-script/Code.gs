@@ -11,7 +11,11 @@ var SHEET_LOG = '기록';
 var SHEET_SETTINGS = '설정';
 var TIERS = [1, 2, 3];
 var MAX_GOALS = 30;
-var ADMIN = '운영진';
+// 결과 입력은 운영진만. 명단은 설정 탭 '운영진 명단' 줄의 값(쉼표·슬래시·줄바꿈으로 구분)에서 읽고,
+// 그 칸이 비어 있으면 아래 기본 명단을 쓴다.
+var STAFF_LABEL = '운영진 명단';
+var DEFAULT_STAFF = ['조이', '병희', '정민', '뚝배기', '하지', '치노'];
+var PLAYOFF_LABEL = '결정전 승자 팀 번호';
 var RESULT_COLS = 9;
 var LOG_COLS = 7;
 var MAX_PIN_FAILS = 30; // 10분 창 안에서 이만큼 틀리면
@@ -51,8 +55,14 @@ function setup() {
   log.getRange('B:B').setNumberFormat('@');
   log.getRange('F:G').setNumberFormat('@'); // "3:1"이 시각으로 바뀌지 않게
   var settings = ensureSheet_(ss, SHEET_SETTINGS, ['항목', '값']);
+  settings.getRange('B:B').setNumberFormat('@'); // 운영진 이름이 숫자처럼 보여도 글자로
   if (settings.getLastRow() < 2) {
-    settings.getRange(2, 1, 1, 2).setValues([['결정전 승자 팀 번호', '']]);
+    settings.getRange(2, 1, 1, 2).setValues([[PLAYOFF_LABEL, '']]);
+  }
+  // 예전에 만든 시트에도 운영진 명단 줄을 더한다(이미 있으면 그대로 둔다).
+  if (!readSettings_(settings).hasOwnProperty(STAFF_LABEL)) {
+    var staffRow = Math.max(settings.getLastRow(), 2) + 1;
+    settings.getRange(staffRow, 1, 1, 2).setValues([[STAFF_LABEL, DEFAULT_STAFF.join(', ')]]);
   }
   removeBlankDefaultSheet_(ss);
   var pin = PropertiesService.getScriptProperties().getProperty('PIN');
@@ -175,12 +185,8 @@ function save_(ss, req, now) {
   if (!teamA || !teamB || a === b) return fail_('INVALID', '서로 다른 두 팀을 골라 주세요.');
 
   var by = String(req.by == null ? '' : req.by).trim();
-  var allowed = teamA.players.concat(teamB.players).filter(function (p) {
-    return p;
-  });
-  allowed.push(ADMIN);
-  if (!by || allowed.indexOf(by) < 0) {
-    return fail_('INVALID', '입력자는 그 경기 6명 중 1명이거나 운영진이어야 합니다.');
+  if (!by || readStaff_(ss).indexOf(by) < 0) {
+    return fail_('INVALID', '결과는 운영진만 입력할 수 있습니다. 입력자를 운영진 명단에서 골라 주세요.');
   }
 
   if (!Array.isArray(req.games) || req.games.length === 0 || req.games.length > TIERS.length) {
@@ -275,13 +281,49 @@ function readData_(ss) {
       return g;
     });
   var settings = ss.getSheetByName(SHEET_SETTINGS);
-  var winner = settings && settings.getLastRow() >= 2 ? Number(settings.getRange(2, 2).getValue()) : NaN;
+  var values = settings ? readSettings_(settings) : {};
+  // 결정전 승자는 항목 이름으로 찾고, 없으면 예전처럼 B2 칸을 본다.
+  var rawWinner = values.hasOwnProperty(PLAYOFF_LABEL)
+    ? values[PLAYOFF_LABEL]
+    : settings && settings.getLastRow() >= 2
+      ? settings.getRange(2, 2).getValue()
+      : '';
+  var winner = Number(rawWinner);
   return {
     teams: readTeams_(ss),
     games: games,
-    settings: { playoffWinner: winner >= 1 ? winner : null },
+    settings: { playoffWinner: winner >= 1 ? winner : null, staff: readStaff_(ss) },
     serverTime: new Date().toISOString()
   };
+}
+
+// 설정 탭(항목·값 두 칸)을 { 항목: 값 } 으로 읽는다.
+function readSettings_(sheet) {
+  var out = {};
+  var last = sheet.getLastRow();
+  if (last < 2) return out;
+  sheet
+    .getRange(2, 1, last - 1, 2)
+    .getValues()
+    .forEach(function (r) {
+      var key = String(r[0]).trim();
+      if (key) out[key] = r[1];
+    });
+  return out;
+}
+
+// 운영진 명단. 설정 탭 값이 비어 있거나 탭이 없으면 기본 명단.
+function readStaff_(ss) {
+  var sheet = ss.getSheetByName(SHEET_SETTINGS);
+  var raw = sheet ? readSettings_(sheet)[STAFF_LABEL] : '';
+  var names = [];
+  String(raw == null ? '' : raw)
+    .split(/[,\/·\n]+/)
+    .forEach(function (name) {
+      var n = name.trim();
+      if (n && names.indexOf(n) < 0) names.push(n);
+    });
+  return names.length ? names : DEFAULT_STAFF.slice();
 }
 
 function readTeams_(ss) {

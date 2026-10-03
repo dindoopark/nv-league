@@ -4,7 +4,6 @@ import { API_URL } from './config.js';
 import { SAMPLE_DATA } from './sample-data.js';
 import {
   TIERS,
-  ADMIN,
   computeTeamStandings,
   computeMatrix,
   computePlayerStats,
@@ -1312,13 +1311,14 @@ function renderInput() {
     );
   });
 
+  // 결과는 운영진만 입력한다. 명단은 구글 시트 설정 탭(서버가 settings.staff로 보내 줌).
   const savedBy = storageGet(BY_KEY);
-  const people = [...teamA.players, ...teamB.players].filter(Boolean);
+  const staff = state.data.settings?.staff ?? [];
   const bySelect = el(
     'select',
-    { name: 'by', 'aria-label': '입력자', onchange: markDirty },
-    el('option', { value: '' }, '입력자 선택'),
-    [...people, ADMIN].map((p) => el('option', { value: p, selected: p === savedBy }, p)),
+    { name: 'by', 'aria-label': '입력자(운영진)', onchange: markDirty },
+    el('option', { value: '' }, staff.length ? '입력자(운영진) 선택' : '운영진 명단을 불러오지 못했습니다'),
+    staff.map((p) => el('option', { value: p, selected: p === savedBy }, p)),
   );
 
   const locked = !state.unlocked;
@@ -1586,7 +1586,7 @@ async function onSave(event) {
     return;
   }
   if (!by) {
-    showNotice('error', '입력자를 골라 주세요.');
+    showNotice('error', '입력자(운영진)를 골라 주세요.');
     return;
   }
   storageSet(BY_KEY, by);

@@ -50,12 +50,13 @@ export const SAMPLE_DATA = {
               pa: home.players[i],
               pb: away.players[i],
               at,
-              by: '운영진',
+              by: '조이',
             },
           ]
         : [],
     );
   }),
-  settings: { playoffWinner: null },
+  // 결과를 입력할 수 있는 운영진(실제 명단은 구글 시트 설정 탭)
+  settings: { playoffWinner: null, staff: ['조이', '병희', '정민', '뚝배기', '하지', '치노'] },
   serverTime: '2026-10-19T12:00:00.000Z',
 };

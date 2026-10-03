@@ -3,7 +3,6 @@
 
 export const TIERS = [1, 2, 3];
 export const MAX_GOALS = 30;
-export const ADMIN = '운영진';
 
 // 팀 번호가 작은 쪽을 a로 맞춘다. 점수(ga/gb)와 선수(pa/pb)도 같이 뒤집는다.
 export function normalizeGame(game) {

@@ -194,7 +194,7 @@ function post(env, body, now = new Date(env.clock.ms)) {
   return plain(env.gs.handlePost_({ postData: { contents: JSON.stringify(body) } }, now));
 }
 
-const base = { action: 'save', pin: PIN, by: '스톰', a: 1, b: 2 };
+const base = { action: 'save', pin: PIN, by: '조이', a: 1, b: 2 };
 const sheet = (env, name) => env.ss.getSheetByName(name);
 
 test('setup은 탭 4개를 만들고 명단을 채우며, 다시 실행해도 겹치지 않는다', () => {
@@ -209,6 +209,8 @@ test('setup은 탭 4개를 만들고 명단을 채우며, 다시 실행해도 �
   assert.deepEqual(plain(teams.rows[9]), [9, '대갈장군', '뚝배기', '치노', '수프러차']);
   assert.ok(sheet(env, '기록').formats.some(([range, fmt]) => range === 'F:G' && fmt === '@'));
   assert.deepEqual(plain(sheet(env, '설정').rows[1]), ['결정전 승자 팀 번호', '']);
+  assert.deepEqual(plain(sheet(env, '설정').rows[2]), ['운영진 명단', '조이, 병희, 정민, 뚝배기, 하지, 치노']);
+  assert.equal(sheet(env, '설정').getLastRow(), 3);
 });
 
 test('doGet은 팀 9개와 빈 결과를 JSON으로 돌려준다', () => {
@@ -220,7 +222,7 @@ test('doGet은 팀 9개와 빈 결과를 JSON으로 돌려준다', () => {
   assert.equal(body.data.teams.length, 9);
   assert.deepEqual(body.data.teams[8], { no: 9, name: '대갈장군', players: ['뚝배기', '치노', '수프러차'] });
   assert.deepEqual(body.data.games, []);
-  assert.deepEqual(body.data.settings, { playoffWinner: null });
+  assert.deepEqual(body.data.settings, { playoffWinner: null, staff: ['조이', '병희', '정민', '뚝배기', '하지', '치노'] });
   assert.equal(typeof body.data.serverTime, 'string');
 });
 
@@ -256,13 +258,13 @@ test('비밀번호를 30번 틀리면 맞는 비밀번호도 잠시 막는다', 
 
 test('팀 번호가 큰 쪽이 A로 와도 작은 팀 기준으로 뒤집어 저장하고 기록을 남긴다', () => {
   const env = ready();
-  const res = post(env, { ...base, by: '범수', a: 2, b: 1, games: [{ tier: 1, ga: 3, gb: 1 }] });
+  const res = post(env, { ...base, by: '하지', a: 2, b: 1, games: [{ tier: 1, ga: 3, gb: 1 }] });
   assert.equal(res.ok, true);
   assert.equal(res.changed, 1);
   assert.deepEqual(res.data.games, [
-    { a: 1, b: 2, tier: 1, ga: 1, gb: 3, pa: '스톰', pb: '범수', at: '2026-10-02T12:00:00.000Z', by: '범수' },
+    { a: 1, b: 2, tier: 1, ga: 1, gb: 3, pa: '스톰', pb: '범수', at: '2026-10-02T12:00:00.000Z', by: '하지' },
   ]);
-  assert.deepEqual(plain(sheet(env, '기록').rows[1]), ['2026-10-02T12:00:00.000Z', '범수', 1, 2, 1, '(없음)', '1:3']);
+  assert.deepEqual(plain(sheet(env, '기록').rows[1]), ['2026-10-02T12:00:00.000Z', '하지', 1, 2, 1, '(없음)', '1:3']);
   assert.equal(env.lock.held, false);
 });
 
@@ -281,15 +283,15 @@ test('점수를 고치면 덮어쓰고, null/null이면 그 판을 지운다', (
   const later = new Date('2026-10-03T09:30:00Z');
   const res = post(
     env,
-    { ...base, by: '운영진', games: [{ tier: 1, ga: 4, gb: 2 }, { tier: 2, ga: null, gb: null }] },
+    { ...base, by: '정민', games: [{ tier: 1, ga: 4, gb: 2 }, { tier: 2, ga: null, gb: null }] },
     later,
   );
   assert.equal(res.changed, 2);
-  assert.deepEqual(res.data.games.map((g) => [g.tier, g.ga, g.gb, g.by, g.at]), [[1, 4, 2, '운영진', '2026-10-03T09:30:00.000Z']]);
+  assert.deepEqual(res.data.games.map((g) => [g.tier, g.ga, g.gb, g.by, g.at]), [[1, 4, 2, '정민', '2026-10-03T09:30:00.000Z']]);
   const log = plain(sheet(env, '기록').rows.slice(3));
   assert.deepEqual(log.map((r) => r.slice(1)), [
-    ['운영진', 1, 2, 1, '2:2', '4:2'],
-    ['운영진', 1, 2, 2, '0:1', '삭제'],
+    ['정민', 1, 2, 1, '2:2', '4:2'],
+    ['정민', 1, 2, 2, '0:1', '삭제'],
   ]);
   assert.equal(sheet(env, '결과').getLastRow(), 2);
 });
@@ -301,11 +303,39 @@ test('없는 판을 지우라고 하면 바뀐 판 0', () => {
   assert.equal(res.changed, 0);
 });
 
-test('입력자가 그 경기 6명이나 운영진이 아니면 INVALID', () => {
+test('입력자는 운영진 명단에 있는 사람만 된다(그 경기 선수나 공용 "운영진"도 안 됨)', () => {
   const env = ready();
-  assert.equal(post(env, { ...base, by: '레오', games: [{ tier: 1, ga: 1, gb: 0 }] }).error, 'INVALID');
-  assert.equal(post(env, { ...base, by: '', games: [{ tier: 1, ga: 1, gb: 0 }] }).error, 'INVALID');
-  assert.equal(post(env, { ...base, by: '맹구', games: [{ tier: 1, ga: 1, gb: 0 }] }).ok, true);
+  const g = [{ tier: 1, ga: 1, gb: 0 }];
+  for (const by of ['스톰', '범수', '레오', '운영진', '', '조이 ']) {
+    const res = post(env, { ...base, by, games: g });
+    if (by === '조이 ') assert.equal(res.ok, true, '앞뒤 공백은 무시');
+    else assert.equal(res.error, 'INVALID', by);
+  }
+  assert.equal(post(env, { ...base, by: '치노', games: [{ tier: 2, ga: 1, gb: 0 }] }).ok, true);
+});
+
+test('설정 탭의 운영진 명단을 고치면 바로 적용되고, 비우면 기본 명단을 쓴다', () => {
+  const env = ready();
+  const settings = sheet(env, '설정');
+  settings.getRange(3, 2).setValues([['조이 / 새운영진\n하지']]);
+  const res = post(env, { ...base, by: '새운영진', games: [{ tier: 1, ga: 1, gb: 0 }] });
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.data.settings.staff, ['조이', '새운영진', '하지']);
+  assert.equal(post(env, { ...base, by: '병희', games: [{ tier: 2, ga: 1, gb: 0 }] }).error, 'INVALID');
+  settings.getRange(3, 2).setValues([['']]);
+  assert.equal(post(env, { ...base, by: '병희', games: [{ tier: 2, ga: 1, gb: 0 }] }).ok, true);
+});
+
+test('운영진 명단 줄이 없는 예전 시트도 setup을 다시 돌리면 명단 줄이 생긴다', () => {
+  const env = ready();
+  const settings = sheet(env, '설정');
+  settings.getRange(3, 1, 1, 2).setValues([['', '']]);
+  assert.equal(settings.getLastRow(), 2);
+  assert.deepEqual(JSON.parse(env.gs.doGet({ parameter: {} }).getContent()).data.settings.staff.length, 6);
+  env.gs.setup();
+  assert.deepEqual(plain(settings.rows[2]), ['운영진 명단', '조이, 병희, 정민, 뚝배기, 하지, 치노']);
+  env.gs.setup();
+  assert.equal(settings.getLastRow(), 3);
 });
 
 test('점수·팀·티어가 잘못되면 INVALID이고 아무것도 쓰지 않는다', () => {
@@ -357,14 +387,14 @@ test('운영자가 직접 넣은 이상한 줄은 건너뛰되 지우지 않고,
   sheet(env, '설정').getRange(2, 2).setValues([[7]]);
   const res = post(env, { ...base, games: [{ tier: 1, ga: 1, gb: 0 }] });
   assert.equal(res.data.games.length, 1);
-  assert.deepEqual(res.data.settings, { playoffWinner: 7 });
+  assert.equal(res.data.settings.playoffWinner, 7);
   assert.ok(sheet(env, '결과').rows.some((r) => r[0] === '메모'));
 });
 
 test('팀 탭에서 선수를 바꾸면 새 선수가 입력자로 허용되고 판에 그 이름이 저장된다', () => {
   const env = ready();
   sheet(env, '팀').getRange(2, 3).setValues([['대타']]);
-  const res = post(env, { ...base, by: '대타', games: [{ tier: 1, ga: 2, gb: 0 }] });
+  const res = post(env, { ...base, by: '뚝배기', games: [{ tier: 1, ga: 2, gb: 0 }] });
   assert.equal(res.ok, true);
   assert.equal(res.data.games[0].pa, '대타');
   assert.equal(post(env, { ...base, by: '스톰', games: [{ tier: 2, ga: 0, gb: 0 }] }).error, 'INVALID');
@@ -393,7 +423,7 @@ test('선수를 바꾼 뒤 예전 판 점수를 고쳐도 그 판의 선수 이�
   const env = ready();
   post(env, { ...base, games: [{ tier: 1, ga: 3, gb: 0 }] });
   sheet(env, '팀').getRange(2, 3).setValues([['대타']]);
-  const res = post(env, { ...base, by: '범수', games: [{ tier: 1, ga: 3, gb: 1 }] });
+  const res = post(env, { ...base, by: '하지', games: [{ tier: 1, ga: 3, gb: 1 }] });
   assert.equal(res.changed, 1);
   assert.deepEqual(res.data.games.map((g) => [g.ga, g.gb, g.pa, g.pb]), [[3, 1, '스톰', '범수']]);
 });
@@ -401,14 +431,14 @@ test('선수를 바꾼 뒤 예전 판 점수를 고쳐도 그 판의 선수 이�
 test('운영자가 큰 팀 번호를 앞에 적은 줄도 페이지에서 고치고 지울 수 있다', () => {
   const env = ready();
   sheet(env, '결과').getRange(2, 1, 1, 9).setValues([[5, 2, 1, 3, 0, '레오', '범수', '', '운영진']]);
-  const fixed = post(env, { ...base, by: '범수', a: 2, b: 5, games: [{ tier: 1, ga: 1, gb: 1 }] });
+  const fixed = post(env, { ...base, by: '하지', a: 2, b: 5, games: [{ tier: 1, ga: 1, gb: 1 }] });
   assert.equal(fixed.changed, 1);
   assert.deepEqual(
     fixed.data.games.map((g) => [g.a, g.b, g.tier, g.ga, g.gb, g.pa, g.pb]),
     [[2, 5, 1, 1, 1, '범수', '레오']],
   );
   assert.deepEqual(plain(sheet(env, '기록').rows[1]).slice(5), ['0:3', '1:1']);
-  const removed = post(env, { ...base, by: '범수', a: 2, b: 5, games: [{ tier: 1, ga: null, gb: null }] });
+  const removed = post(env, { ...base, by: '하지', a: 2, b: 5, games: [{ tier: 1, ga: null, gb: null }] });
   assert.equal(removed.changed, 1);
   assert.deepEqual(removed.data.games, []);
   assert.equal(sheet(env, '결과').getLastRow(), 1);
@@ -440,6 +470,7 @@ test('저장해도 다른 판의 줄은 자리를 옮기지 않는다', () => {
 test('숫자처럼 보이는 닉네임도 글자 그대로 저장한다', () => {
   const env = ready();
   sheet(env, '팀').getRange(2, 3).setValues([['0412']]);
+  sheet(env, '설정').getRange(3, 2).setValues([['0412, 조이']]);
   const res = post(env, { ...base, by: '0412', games: [{ tier: 1, ga: 2, gb: 0 }] });
   assert.equal(res.ok, true);
   assert.equal(res.data.teams[0].players[0], '0412');
