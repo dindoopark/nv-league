@@ -105,10 +105,12 @@ function handlePost_(e, now) {
   } catch (err) {
     return fail_('INVALID', '요청 형식이 올바르지 않습니다.');
   }
-  if (!req || req.action !== 'save') return fail_('INVALID', '알 수 없는 요청입니다.');
+  if (!req || (req.action !== 'save' && req.action !== 'checkPin')) return fail_('INVALID', '알 수 없는 요청입니다.');
 
   var pinError = checkPin_(req.pin, now);
   if (pinError) return pinError;
+  // 입력 탭을 열 때 비밀번호만 확인한다(틀린 횟수에는 들어간다).
+  if (req.action === 'checkPin') return { ok: true };
 
   var lock = LockService.getScriptLock();
   try {

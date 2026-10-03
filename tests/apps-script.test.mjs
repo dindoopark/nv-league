@@ -497,3 +497,22 @@ test('글자로 적힌 점수를 고치거나 지울 때 기록에는 화면과 
   post(env, { ...base, games: [{ tier: 1, ga: null, gb: null }] });
   assert.deepEqual(plain(sheet(env, '기록').rows[2]).slice(5), ['3:1', '삭제']);
 });
+
+test('checkPin은 비밀번호만 확인하고 아무것도 쓰지 않는다', () => {
+  const env = ready();
+  const ok = post(env, { action: 'checkPin', pin: ` ${PIN} ` });
+  assert.deepEqual(ok, { ok: true });
+  const wrong = post(env, { action: 'checkPin', pin: '0000' });
+  assert.deepEqual([wrong.ok, wrong.error], [false, 'PIN']);
+  assert.equal(sheet(env, '결과').getLastRow(), 1);
+  assert.equal(sheet(env, '기록').getLastRow(), 1);
+  assert.equal(env.lock.held, false);
+});
+
+test('checkPin도 틀린 횟수에 들어가 30번이면 잠기고, PIN이 없으면 SETUP', () => {
+  const env = ready();
+  for (let i = 0; i < 30; i++) post(env, { action: 'checkPin', pin: 'x' });
+  assert.equal(post(env, { action: 'checkPin', pin: PIN }).error, 'LOCKED');
+  assert.equal(post(env, { ...base, games: [{ tier: 1, ga: 1, gb: 0 }] }).error, 'LOCKED');
+  assert.equal(post(ready({ pin: null }), { action: 'checkPin', pin: PIN }).error, 'SETUP');
+});
