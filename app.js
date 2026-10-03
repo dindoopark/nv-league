@@ -40,6 +40,7 @@ const state = {
   pin: '',
   gateChecking: false,
   gateError: '',
+  gateEpoch: 0, // 다시 잠글 때마다 올린다. 그 전에 보낸 비밀번호 확인 결과는 버린다.
   notice: null, // { kind: 'ok' | 'error' | 'info', text }
   look: storageGet(LOOK_KEY) === 'table' ? 'table' : 'cards',
   focusNo: null, // 카드에서 가운데 둔 팀 번호
@@ -1321,13 +1322,19 @@ function renderInput() {
   );
 
   const locked = !state.unlocked;
+  // 잠긴 채 다시 그릴 때(자동 새로고침 등)는 떠 있던 비밀번호 창을 그대로 옮겨 쓴다.
+  // 새로 만들면 치던 비밀번호와 확인 중이던 요청이 사라진다.
+  const keptGate = locked ? view.querySelector('.pin-gate') : null;
+  if (keptGate?.contains(document.activeElement)) {
+    queueMicrotask(() => keptGate.querySelector('input')?.focus({ preventScroll: true }));
+  }
   const form = el(
       'form',
       { class: `panel input-form${locked ? ' is-locked' : ''}`, onsubmit: onSave, novalidate: true, inert: locked },
       el(
         'header',
         { class: 'panel-head' },
-        el('h2', {}, '결과 입력'),
+        el('h2', { id: 'input-title', tabindex: -1 }, '결과 입력'),
         found
           ? el(
               'span',
@@ -1361,43 +1368,51 @@ function renderInput() {
         '판마다 따로 저장됩니다. 아직 안 한 판은 비워 두세요. 잘못 넣은 판은 두 칸을 모두 지우고 저장하면 삭제됩니다.',
       ),
     );
-  return [el('div', { class: 'input-wrap' }, form, locked ? pinGate() : null)];
+  return [el('div', { class: 'input-wrap' }, form, locked ? keptGate ?? pinGate() : null)];
 }
 
 // --- 입력 탭 비밀번호 ---
 
 // 입력판 위에 덮는 비밀번호 창. 맞히면 unlockInput, 틀리면 서버 안내를 보여 준다.
+// 입력판의 나머지는 비밀번호를 넣기 전까지 쓸 수 없지만 다른 탭은 그대로 쓸 수 있어 aria-modal은 두지 않는다.
 function pinGate() {
   const input = el('input', {
     name: 'gate-pin',
     type: 'password',
-    autocomplete: 'off',
+    // 'one-time-code': 브라우저가 클럽 비밀번호를 개인 비밀번호처럼 저장하자고 묻지 않게 한다.
+    autocomplete: 'one-time-code',
+    autocapitalize: 'off',
+    spellcheck: 'false',
     enterkeyhint: 'go',
     'aria-label': '클럽 비밀번호',
+    'aria-describedby': 'gate-sub gate-msg',
     placeholder: DEMO ? '데모 모드: 아무거나 넣으면 열려요' : '클럽 비밀번호',
   });
-  const message = el('p', { class: 'gate-msg', 'aria-live': 'polite' }, state.gateError);
+  const message = el('p', { id: 'gate-msg', class: 'gate-msg', 'aria-live': 'polite' });
   const button = el('button', { type: 'submit', class: 'primary' }, '확인');
-  setTimeout(() => {
-    if (input.isConnected) input.focus({ preventScroll: true });
-  }, 50);
-  return el(
+  const gate = el(
     'form',
     {
       class: 'pin-gate',
       role: 'dialog',
-      'aria-modal': 'true',
       'aria-labelledby': 'gate-title',
       novalidate: true,
       onsubmit: (event) => onGateSubmit(event, { input, message, button }),
     },
     el('div', { class: 'gate-icon', 'aria-hidden': 'true' }),
     el('h3', { id: 'gate-title' }, '비밀번호를 넣어 주세요'),
-    el('p', { class: 'gate-sub' }, '결과 입력은 클럽 비밀번호가 있어야 열립니다. 입력 탭에 들어올 때마다 물어봅니다.'),
+    el('p', { id: 'gate-sub', class: 'gate-sub' }, '결과 입력은 클럽 비밀번호가 있어야 열립니다. 입력 탭에 들어올 때마다 물어봅니다.'),
     input,
     button,
     message,
   );
+  // 창이 화면에 붙은 뒤 안내를 넣어야 화면 읽기 프로그램이 읽어 준다.
+  setTimeout(() => {
+    if (!gate.isConnected) return;
+    if (state.gateError) message.textContent = state.gateError;
+    input.focus({ preventScroll: true });
+  }, 50);
+  return gate;
 }
 
 async function onGateSubmit(event, { input, message, button }) {
@@ -1408,6 +1423,7 @@ async function onGateSubmit(event, { input, message, button }) {
     message.textContent = '비밀번호를 넣어 주세요.';
     return;
   }
+  const epoch = state.gateEpoch;
   state.gateChecking = true;
   button.disabled = true;
   button.textContent = '확인 중…';
@@ -1418,8 +1434,8 @@ async function onGateSubmit(event, { input, message, button }) {
       const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'checkPin', pin }) });
       result = await res.json();
     }
-    // 확인하는 사이 다른 탭으로 갔으면 열지 않는다(돌아오면 다시 묻는다).
-    if (!input.isConnected || state.tab !== 'input') return;
+    // 확인하는 사이 입력 탭을 떠났거나 페이지를 벗어났으면 열지 않는다(돌아오면 다시 묻는다).
+    if (epoch !== state.gateEpoch || state.tab !== 'input') return;
     if (!result.ok) {
       state.gateError = result.message || '비밀번호를 확인하지 못했습니다.';
       message.textContent = state.gateError;
@@ -1429,9 +1445,9 @@ async function onGateSubmit(event, { input, message, button }) {
     }
     unlockInput(pin);
   } catch {
-    message.textContent = '연결에 실패했습니다. 다시 시도해 주세요.';
+    if (epoch === state.gateEpoch) message.textContent = '연결에 실패했습니다. 다시 시도해 주세요.';
   } finally {
-    state.gateChecking = false;
+    if (epoch === state.gateEpoch) state.gateChecking = false;
     button.disabled = false;
     button.textContent = '확인';
   }
@@ -1449,18 +1465,30 @@ function unlockInput(pin) {
   }
   view.querySelector('.pin-gate')?.remove();
   document.body.classList.remove('is-typing');
+  // 저장이 비밀번호 때문에 막혀 다시 잠갔던 경우, 그 저장은 안 된 상태라고 알려 준다.
+  if (state.notice?.pinError) showNotice('info', '비밀번호를 확인했습니다. 저장을 다시 눌러 주세요.');
+  // 키보드가 저절로 뜨지 않게 입력판 제목으로 초점을 옮긴다.
+  view.querySelector('#input-title')?.focus({ preventScroll: true });
 }
 
 // 입력판을 잠근다. 적어 둔 점수는 그대로 두고 비밀번호 창만 다시 덮는다(저장 중 비밀번호가 바뀐 경우 등).
-function lockInput(reason = '') {
+// reveal: 창을 화면 가운데로 끌어온다(페이지를 떠날 때는 끄기).
+function lockInput(reason = '', { reveal = true } = {}) {
   state.unlocked = false;
   state.pin = '';
   state.gateError = reason;
+  state.gateEpoch += 1;
+  state.gateChecking = false;
   const form = view.querySelector('form.input-form');
   if (!form) return;
   form.setAttribute('inert', '');
   form.classList.add('is-locked');
-  if (!view.querySelector('.pin-gate')) form.after(pinGate());
+  let gate = view.querySelector('.pin-gate');
+  if (!gate) {
+    gate = pinGate();
+    form.after(gate);
+  }
+  if (reveal) gate.scrollIntoView({ block: 'center' });
 }
 
 // --- 입력 동작 ---
@@ -1580,7 +1608,10 @@ async function onSave(event) {
       if (!body.ok) {
         saveFailed(form, body.message || '저장하지 못했습니다.', pairLabel);
         // 그사이 비밀번호가 바뀌었거나 잠겼으면 적어 둔 점수는 두고 비밀번호 창만 다시 띄운다.
-        if ((body.error === 'PIN' || body.error === 'LOCKED') && state.tab === 'input') lockInput(body.message);
+        if ((body.error === 'PIN' || body.error === 'LOCKED') && state.tab === 'input') {
+          if (state.notice) state.notice.pinError = true;
+          lockInput(body.message);
+        }
         return;
       }
       state.dataGen += 1; // 저장 전에 시작된 불러오기 결과가 이 데이터를 덮지 않게
@@ -1624,6 +1655,8 @@ window.addEventListener('hashchange', () => {
     state.unlocked = false;
     state.pin = '';
     state.gateError = '';
+    state.gateEpoch += 1;
+    state.gateChecking = false;
   }
   if (moved) state.scrollWeek = state.tab === 'schedule';
   render();
@@ -1632,6 +1665,19 @@ window.addEventListener('hashchange', () => {
 });
 
 refreshButton.addEventListener('click', () => load());
+
+// 다른 사이트로 갔다가 '뒤로'로 돌아오면 브라우저가 페이지를 그대로 되살린다(bfcache).
+// 페이지를 떠날 때 잠그고 비밀번호를 지워 두면, 돌아왔을 때 다시 묻는다.
+window.addEventListener('pagehide', () => {
+  if (!state.unlocked) return;
+  if (state.tab === 'input') {
+    lockInput('', { reveal: false });
+  } else {
+    state.unlocked = false;
+    state.pin = '';
+    state.gateEpoch += 1;
+  }
+});
 
 for (const button of lookButtons) button.addEventListener('click', () => setLook(button.dataset.look));
 
