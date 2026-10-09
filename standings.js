@@ -244,3 +244,15 @@ export function computePlayerStats(teams, games) {
   }
   return result;
 }
+
+// 한 사람의 판 기록. 개인 기록 탭과 같은 기준(판에 기록된 이름)이라, 중간에 교체됐거나
+// 팀·티어를 옮겼어도 그 사람이 실제로 뛴 판만 모인다. 여러 티어에서 뛰었으면 모두 더한다.
+export function playerRecord(teams, games, name) {
+  const total = emptyRecord();
+  const stats = computePlayerStats(teams, games);
+  for (const tier of TIERS) {
+    const row = stats[tier].find((r) => r.name === name);
+    if (row) for (const key of Object.keys(total)) total[key] += row[key];
+  }
+  return total;
+}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SCHEDULE, checkSchedule, scheduleView, teamFixtures } from '../schedule.js';
+import { SCHEDULE, checkSchedule, scheduleView, teamFixtures, playerFixtures } from '../schedule.js';
 import { TEAM_META, teamMeta } from '../teams.js';
 import { SAMPLE_DATA } from '../sample-data.js';
 
@@ -74,6 +74,60 @@ test('teamFixtures는 한 팀의 9주 일정을 그 팀 기준 승점으로 돌�
   assert.deepEqual(list[0], { week: 1, rest: false, opponent: byName('노인정'), opponentName: '노인정', status: 'done', pts: 1, oppPts: 7 });
   const restWeek = list.find((f) => f.rest);
   assert.equal(restWeek.week, 6);
+});
+
+test('playerFixtures는 한 선수(팀·티어)의 9주 일정을 그 판 기준으로 돌려준다(홈·원정 모두 내 점수가 앞)', () => {
+  const played = [
+    ...games('노인정', '어색즈', [[2, 1], [1, 1], [3, 0]]), // 1주차: 어색즈가 원정
+    ...games('구육칠즈', '어색즈', [[0, 0], [4, 2]]), // 2주차: 어색즈 원정, 3티어는 아직
+  ];
+  const view = scheduleView(SCHEDULE, TEAMS, played);
+  const list = playerFixtures(view, TEAMS, played, byName('어색즈'), 2);
+  assert.equal(list.length, 9);
+  assert.deepEqual(list[0], {
+    week: 1,
+    current: true, // 1주차의 다른 경기가 아직 안 끝났다
+    rest: false,
+    opponent: byName('노인정'),
+    opponentName: '노인정',
+    home: byName('노인정'),
+    away: byName('어색즈'),
+    oppPlayer: '노인정2',
+    playedBy: '',
+    ga: 1,
+    gb: 1,
+    outcome: 'd',
+  });
+  assert.deepEqual([list[1].ga, list[1].gb, list[1].outcome], [2, 4, 'l']);
+  // 3주차는 아직: 점수 없음, 상대는 지금 명단의 같은 티어
+  assert.deepEqual([list[2].ga, list[2].gb, list[2].outcome, list[2].oppPlayer], [null, null, 'todo', '대갈장군2']);
+  assert.deepEqual(list.filter((f) => f.current).map((f) => f.week), [1]);
+  const rest = list.find((f) => f.rest);
+  assert.deepEqual([rest.week, rest.outcome, rest.opponent, rest.oppPlayer], [6, 'rest', null, '']);
+});
+
+test('playerFixtures: 그 판을 아직 안 했으면 같은 경기의 다른 티어가 끝났어도 예정, 이긴 판은 승', () => {
+  const played = games('노인정', '어색즈', [[2, 1], [1, 1]]);
+  const view = scheduleView(SCHEDULE, TEAMS, played);
+  assert.equal(playerFixtures(view, TEAMS, played, byName('어색즈'), 3)[0].outcome, 'todo');
+  const home = playerFixtures(view, TEAMS, played, byName('노인정'), 1)[0];
+  assert.deepEqual([home.ga, home.gb, home.outcome, home.oppPlayer], [2, 1, 'w', '어색즈1']);
+});
+
+test('playerFixtures: 치른 판은 기록된 이름을 쓰고, 지금 명단과 다르면 playedBy에 그 판을 한 사람을 남긴다', () => {
+  const played = [{ a: byName('노인정'), b: byName('어색즈'), tier: 1, ga: 0, gb: 3, pa: '옛노인', pb: '옛어색' }];
+  const view = scheduleView(SCHEDULE, TEAMS, played);
+  const mine = playerFixtures(view, TEAMS, played, byName('어색즈'), 1)[0];
+  assert.deepEqual([mine.oppPlayer, mine.playedBy, mine.outcome], ['옛노인', '옛어색', 'w']);
+  const same = [{ ...played[0], pb: '어색즈1' }];
+  assert.equal(playerFixtures(scheduleView(SCHEDULE, TEAMS, same), TEAMS, same, byName('어색즈'), 1)[0].playedBy, '');
+});
+
+test('playerFixtures: 상대 팀 이름을 시트에서 못 찾으면 opponent는 null이고 예정으로 둔다', () => {
+  const renamed = TEAMS.map((t) => (t.name === '노인정' ? { ...t, name: '노인정FC' } : t));
+  const view = scheduleView(SCHEDULE, renamed, []);
+  const first = playerFixtures(view, renamed, [], byName('어색즈'), 1)[0];
+  assert.deepEqual([first.opponent, first.opponentName, first.oppPlayer, first.outcome], [null, '노인정', '', 'todo']);
 });
 
 test('팀 이름마다 로고와 색이 있고, 없는 이름은 null', () => {

@@ -12,6 +12,7 @@ import {
   buildSaveGames,
   applySave,
   computePlayerStats,
+  playerRecord,
 } from '../standings.js';
 
 const ROSTER = [
@@ -312,4 +313,17 @@ test('개인 기록은 승점 → 골득실 → 다득점 순으로 정렬하고
     stats[1].map((p) => [p.name, p.rank]),
     [['스톰', 1], ['레오', 2], ['우설', 2], ['병희', 4], ['뚝배기', 5], ['크카모', 6], ['하지', 6], ['태현', 8], ['범수', 9]],
   );
+});
+
+test('playerRecord는 그 이름으로 기록된 판만 모은다(중간 교체·티어 이동이 있어도 사람 기준)', () => {
+  const games = [
+    { ...game(7, 4, 1, 2, 0), pb: '태현', pa: '옛우설' }, // 7팀 1티어 자리에서 옛우설이 뛴 판
+    game(7, 1, 1, 1, 1), // 지금 명단의 우설이 뛴 판(pa 없음 → 명단 이름)
+    { ...game(4, 2, 2, 3, 1), pa: '태현' }, // 태현이 2티어로 옮겨 뛴 판
+  ];
+  assert.deepEqual(playerRecord(TEAMS, games, '우설'), { w: 0, d: 1, l: 0, pts: 1, scored: 1, conceded: 1, diff: 0 });
+  assert.deepEqual(playerRecord(TEAMS, games, '옛우설'), { w: 1, d: 0, l: 0, pts: 3, scored: 2, conceded: 0, diff: 2 });
+  // 1티어에서 진 판과 2티어에서 이긴 판을 더한다
+  assert.deepEqual(playerRecord(TEAMS, games, '태현'), { w: 1, d: 0, l: 1, pts: 3, scored: 3, conceded: 3, diff: 0 });
+  assert.deepEqual(playerRecord(TEAMS, games, '없는사람'), { w: 0, d: 0, l: 0, pts: 0, scored: 0, conceded: 0, diff: 0 });
 });

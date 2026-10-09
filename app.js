@@ -7,11 +7,12 @@ import {
   computeTeamStandings,
   computeMatrix,
   computePlayerStats,
+  playerRecord,
   gamesBetween,
   buildSaveGames,
   applySave,
 } from './standings.js';
-import { SCHEDULE, scheduleView, teamFixtures } from './schedule.js';
+import { SCHEDULE, scheduleView, teamFixtures, playerFixtures } from './schedule.js';
 import { teamMeta } from './teams.js';
 
 const DEMO = !API_URL;
@@ -19,6 +20,8 @@ const CACHE_KEY = 'nv-league:data';
 const BY_KEY = 'nv-league:by';
 const PACK_KEY = 'nv-league:pack-opened'; // 카드 팩을 한 번 연 사람은 다음부터 카드가 바로 깔린다
 const LOOK_KEY = 'nv-league:standings-look'; // 순위 탭 보기(카드 / 순위표)
+const SCHED_LOOK_KEY = 'nv-league:schedule-look'; // 일정 탭 보기(전체 일정 / 개인 일정)
+const ME_KEY = 'nv-league:me'; // 개인 일정에서 고른 선수 이름
 const TABS = ['standings', 'schedule', 'matrix', 'players', 'input'];
 const AUTO_REFRESH_MS = 60_000;
 
@@ -48,6 +51,8 @@ const state = {
   focusNo: null, // 카드에서 가운데 둔 팀 번호
   flippedNo: null, // 뒤집어 둔 카드의 팀 번호
   scrollWeek: false, // 일정 탭에 들어오면 이번 주로 스크롤
+  scheduleLook: storageGet(SCHED_LOOK_KEY) === 'player' ? 'player' : 'weeks',
+  me: storageGet(ME_KEY) ?? '', // 개인 일정에서 고른 선수 이름. 이름으로 기억해 팀을 옮겨도 따라간다.
 };
 
 const view = document.getElementById('view');
@@ -920,6 +925,7 @@ function renderSchedule() {
   const { teams, games } = state.data;
   const sv = scheduleView(SCHEDULE, teams, games);
   const issues = scheduleNameIssues(teams);
+  const personal = state.scheduleLook === 'player';
   return [
     el(
       'header',
@@ -929,36 +935,222 @@ function renderSchedule() {
       el(
         'p',
         { class: 'sec-note' },
-        sv.currentWeek
-          ? `지금은 ${sv.currentWeek}주차입니다. 경기를 누르면 판별 결과를 볼 수 있습니다.`
-          : '모든 주차 경기가 끝났습니다. 경기를 누르면 판별 결과를 볼 수 있습니다.',
+        personal
+          ? '선수를 고르면 그 선수의 주차별 상대와 판 결과가 나옵니다. 고른 이름은 이 기기에 기억됩니다.'
+          : sv.currentWeek
+            ? `지금은 ${sv.currentWeek}주차입니다. 경기를 누르면 판별 결과를 볼 수 있습니다.`
+            : '모든 주차 경기가 끝났습니다. 경기를 누르면 판별 결과를 볼 수 있습니다.',
       ),
     ),
     issues.missing.length || issues.unscheduled.length
       ? el('p', { class: 'callout warn', role: 'note' }, nameIssueText(issues))
       : null,
+    scheduleLookToggle(),
+    ...(personal
+      ? renderPersonalSchedule(sv)
+      : [
+          el(
+            'nav',
+            { class: 'week-strip', 'aria-label': '주차로 이동' },
+            sv.weeks.map((w) =>
+              el(
+                'button',
+                {
+                  type: 'button',
+                  class: `week-chip${w.current ? ' is-current' : ''}${w.done === w.total ? ' is-done' : ''}`,
+                  'aria-label': `${w.week}주차로 이동${w.current ? ', 이번 주' : ''}`,
+                  onclick: () => scrollToWeek(w.week),
+                },
+                w.week,
+              ),
+            ),
+          ),
+          el(
+            'ol',
+            { class: 'weeks' },
+            sv.weeks.map((w) => weekCard(w)),
+          ),
+        ]),
+  ];
+}
+
+// 일정 탭 보기 전환: 전체 일정(주차별 대진) / 개인 일정(한 선수의 주차별 상대)
+function scheduleLookToggle() {
+  const button = (look, label) =>
     el(
-      'nav',
-      { class: 'week-strip', 'aria-label': '주차로 이동' },
-      sv.weeks.map((w) =>
+      'button',
+      { type: 'button', class: 'seg-btn', 'aria-pressed': String(state.scheduleLook === look), onclick: () => setScheduleLook(look) },
+      label,
+    );
+  return el(
+    'div',
+    { class: 'sched-look' },
+    el('div', { class: 'seg', role: 'group', 'aria-label': '일정 보기 방식' }, button('weeks', '전체 일정'), button('player', '개인 일정')),
+  );
+}
+
+function setScheduleLook(look) {
+  if (state.scheduleLook === look) return;
+  state.scheduleLook = look;
+  storageSet(SCHED_LOOK_KEY, look);
+  render();
+  // 다시 그려도 누른 단추에 초점을 둔다(키보드·화면 읽기 사용자)
+  view.querySelector('.sched-look .seg-btn[aria-pressed="true"]')?.focus({ preventScroll: true });
+}
+
+// 이름으로 선수 자리(팀·티어)를 찾는다. 명단에 없으면 null.
+function findPlayer(teams, name) {
+  if (!name) return null;
+  for (const team of teams) {
+    const i = team.players.indexOf(name);
+    if (i >= 0 && TIERS.includes(i + 1)) return { team, tier: i + 1 };
+  }
+  return null;
+}
+
+function onMePick(event) {
+  state.me = event.target.value;
+  storageSet(ME_KEY, state.me);
+  render();
+  view.querySelector('.me-pick')?.focus({ preventScroll: true });
+}
+
+// --- 일정 탭: 개인 일정 ---
+
+function renderPersonalSchedule(sv) {
+  const { teams, games } = state.data;
+  const slot = findPlayer(teams, state.me);
+  const picker = el(
+    'select',
+    { class: 'me-pick', 'aria-label': '선수 고르기', onchange: onMePick },
+    el('option', { value: '' }, '선수를 고르세요'),
+    teams.map((t) =>
+      el(
+        'optgroup',
+        { label: t.name },
+        TIERS.map((tier) => {
+          const name = t.players[tier - 1];
+          if (!name) return null;
+          return el('option', { value: name, selected: slot?.team.no === t.no && slot?.tier === tier }, `${name} · ${tier}티어`);
+        }),
+      ),
+    ),
+  );
+  const pickRow = el('label', { class: 'me-row' }, el('span', { class: 'me-label' }, '선수'), picker);
+  // 넓은 화면에서는 요약 카드(왼쪽)와 주차별 상대(오른쪽)를 나란히 둔다(style.css .me-layout)
+  const layout = (...children) => [el('div', { class: 'me-layout' }, children)];
+  if (!slot) {
+    return layout(
+      el(
+        'section',
+        { class: 'panel me-panel', 'aria-label': '개인 일정' },
+        pickRow,
         el(
-          'button',
-          {
-            type: 'button',
-            class: `week-chip${w.current ? ' is-current' : ''}${w.done === w.total ? ' is-done' : ''}`,
-            'aria-label': `${w.week}주차로 이동${w.current ? ', 이번 주' : ''}`,
-            onclick: () => scrollToWeek(w.week),
-          },
-          w.week,
+          'p',
+          { class: 'me-empty' },
+          state.me
+            ? `'${state.me}' 선수를 지금 명단에서 찾지 못했습니다. 다시 골라 주세요.`
+            : '내 이름을 고르면 9주 동안 누구와 붙는지, 판 결과가 어땠는지 한눈에 볼 수 있습니다.',
         ),
+      ),
+    );
+  }
+  const { team, tier } = slot;
+  const name = team.players[tier - 1];
+  const list = playerFixtures(sv, teams, games, team.no, tier);
+  const lost = fixturesLost(list);
+  // 기록은 이 사람이 실제로 뛴 판(개인 탭과 같은 기준). 일정 줄은 지금 자리(팀·티어) 기준이라,
+  // 교체 전 다른 사람이 뛴 판('○○ 출전')은 일정에는 나오지만 기록에는 들어가지 않는다.
+  const { w, d, l, pts, diff } = playerRecord(teams, games, name);
+  const left = list.filter((f) => f.outcome === 'todo' && f.opponent != null);
+  const next = left[0];
+  const summary = el(
+    'section',
+    { class: `panel me-panel t${tier}`, 'aria-labelledby': 'me-title', style: { '--team': accentOf(team.name) } },
+    pickRow,
+    el(
+      'div',
+      { class: 'me-card' },
+      teamLogo(team, { size: 48 }),
+      el(
+        'div',
+        { class: 'me-id' },
+        el('h3', { id: 'me-title' }, name, el('span', { class: 'me-tier' }, `${tier}티어`)),
+        el('span', { class: 'me-team' }, team.name),
       ),
     ),
     el(
-      'ol',
-      { class: 'weeks' },
-      sv.weeks.map((w) => weekCard(w)),
+      'dl',
+      { class: 'dock-stats me-stats' },
+      statCell('승-무-패', `${w}-${d}-${l}`),
+      statCell('승점', pts),
+      statCell('득실', signed(diff), diff > 0 ? 'pos' : diff < 0 ? 'neg' : null),
+      statCell('남은 판', lost ? '—' : left.length), // 대진표에서 팀을 못 찾으면 셀 수 없다
     ),
+    next
+      ? el(
+          'p',
+          { class: `me-next${next.current ? ' is-current' : ''}` },
+          el('span', { class: 'me-next-label' }, next.current ? '이번 주' : '다음 판'),
+          el('span', {}, `${next.week}주차 · vs `, el('b', {}, next.oppPlayer || next.opponentName), ` (${next.opponentName})`),
+        )
+      : null,
+  );
+  const fixtures = lost
+    ? el('p', { class: 'callout warn', role: 'note' }, LOST_FIXTURES)
+    : el(
+        'section',
+        { class: 'panel', 'aria-labelledby': 'me-fx-title' },
+        el(
+          'header',
+          { class: 'panel-head' },
+          el('h3', { id: 'me-fx-title' }, '주차별 상대'),
+          el('span', { class: 'muted' }, `${tier}티어끼리 1:1 · 내 점수가 앞`),
+        ),
+        el(
+          'ol',
+          { class: 'fx-list me-fx' },
+          list.map((f) => personalFixtureItem(f)),
+        ),
+        el('p', { class: 'note' }, '경기를 누르면 그 경기의 세 판 결과를 볼 수 있습니다.'),
+      );
+  return layout(summary, fixtures);
+}
+
+function personalFixtureItem(f) {
+  const week = el('span', { class: 'fx-week' }, `${f.week}주`, f.current ? el('small', {}, '이번 주') : null);
+  if (f.rest) {
+    return el('li', { class: `fx o-rest${f.current ? ' is-current' : ''}` }, el('div', { class: 'fx-btn' }, week, el('span', { class: 'fx-opp rest' }, '휴식')));
+  }
+  const unknown = opponentUnknown(f);
+  const label = unknown ? UNKNOWN_NAME : OUTCOME_LABEL[f.outcome];
+  // 이 자리에서 다른 사람이 뛴 판(중간 교체)은 그 이름을 앞에 둔다. 좁은 화면에서 잘리면 팀 이름부터 잘린다.
+  const sub = [f.playedBy ? `${f.playedBy} 출전` : null, f.opponentName].filter(Boolean).join(' · ');
+  const body = [
+    week,
+    el(
+      'span',
+      { class: 'fx-opp' },
+      el('small', {}, 'vs'),
+      teamLogo(unknown ? { no: '?' } : { no: f.opponent, name: f.opponentName }, { size: 24 }),
+      el('span', { class: 'fx-who' }, el('b', {}, f.oppPlayer || f.opponentName || '미정'), f.oppPlayer ? el('em', {}, sub) : null),
+    ),
+    el('span', { class: 'fx-score' }, f.ga == null ? '' : `${f.ga}:${f.gb}`),
+    el('span', { class: 'fx-tag' }, label),
   ];
+  const canOpen = f.home != null && f.away != null;
+  return el(
+    'li',
+    { class: `fx o-${unknown ? 'unknown' : f.outcome}${f.current ? ' is-current' : ''}${f.playedBy ? ' is-sub' : ''}` },
+    canOpen
+      ? el(
+          'button',
+          { type: 'button', class: 'fx-btn', onclick: () => openInput(f.home, f.away) },
+          body,
+          el('span', { class: 'sr-only' }, `, ${f.week}주차 경기 판별 결과 보기${f.playedBy ? ', 내 기록에는 들어가지 않음' : ''}`),
+        )
+      : el('div', { class: 'fx-btn' }, body),
+  );
 }
 
 // 좁은 화면에서 주차 단추 줄이 옆으로 넘치면 이번 주 단추가 보이도록 그 줄만 가로로 옮긴다.
