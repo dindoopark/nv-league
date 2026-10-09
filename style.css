@@ -2987,6 +2987,17 @@ input:focus {
   padding: 7px 2px;
 }
 
+/* 보기 모드: 누구나 판별 점수를 본다. 점수 칸은 읽기 전용이고 누르면 비밀번호 창이 뜬다(app.js openGate) */
+.input-form.is-viewing .goal {
+  cursor: pointer;
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.input-form.is-viewing .goal::placeholder {
+  color: var(--faint);
+  font-weight: 700;
+}
+
 .who {
   display: grid;
   grid-template-columns: 1fr;
@@ -3064,6 +3075,11 @@ input:focus {
 
 .gate-msg:empty {
   min-height: 0;
+}
+
+.gate-cancel {
+  margin-top: -2px;
+  color: var(--muted);
 }
 
 /* 자물쇠: 몸통(::before)과 고리(::after) */

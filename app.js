@@ -33,10 +33,13 @@ const state = {
   formBase: null, // 입력칸을 채울 때 쓴 판 { a, b, games }. 저장할 때 이것과 비교해 바뀐 판만 보낸다.
   formDirty: false,
   saving: false,
-  // 입력 탭은 들어올 때마다 비밀번호를 묻는다. 맞으면 unlocked, 탭을 떠나거나 새로고침하면 다시 잠근다.
+  // 입력 탭은 누구나 열어 판별 점수를 볼 수 있다(보기 모드). 점수 칸이나 저장을 누르면 비밀번호를 묻고,
+  // 맞으면 unlocked. 탭을 떠나거나 새로고침하면 다시 잠근다.
   // pin은 메모리에만 두고 저장할 때 같이 보낸다(브라우저 저장소에 남기지 않음).
   unlocked: false,
   pin: '',
+  gateOpen: false, // 비밀번호 창이 떠 있는지
+  gateFor: '', // 비밀번호 창을 띄운 점수 칸 이름(ga1 등). 맞히면 그 칸으로 초점을 돌려준다. 저장에서 띄웠으면 ''.
   gateChecking: false,
   gateError: '',
   gateEpoch: 0, // 다시 잠글 때마다 올린다. 그 전에 보낸 비밀번호 확인 결과는 버린다.
@@ -810,7 +813,7 @@ function fixtureItem(f, team) {
           'button',
           { type: 'button', class: 'fx-btn', onclick: () => openInput(f.home, f.away) },
           body,
-          el('span', { class: 'sr-only' }, `, ${team.name} 경기 결과 입력`),
+          el('span', { class: 'sr-only' }, `, ${team.name} 경기 판별 결과 보기`),
         )
       : el('div', { class: 'fx-btn' }, body),
   );
@@ -927,8 +930,8 @@ function renderSchedule() {
         'p',
         { class: 'sec-note' },
         sv.currentWeek
-          ? `지금은 ${sv.currentWeek}주차입니다. 경기를 누르면 결과를 입력합니다.`
-          : '모든 주차 경기가 끝났습니다. 경기를 누르면 결과를 고칠 수 있습니다.',
+          ? `지금은 ${sv.currentWeek}주차입니다. 경기를 누르면 판별 결과를 볼 수 있습니다.`
+          : '모든 주차 경기가 끝났습니다. 경기를 누르면 판별 결과를 볼 수 있습니다.',
       ),
     ),
     issues.missing.length || issues.unscheduled.length
@@ -1034,7 +1037,7 @@ function matchButton(w, m) {
       type: 'button',
       class: `match s-${m.status}${unknown ? ' is-unknown' : ''}`,
       disabled: !canOpen,
-      'aria-label': `${w.week}주차 ${m.homeName} 대 ${m.awayName}, ${statusText}${score}${canOpen ? ', 결과 입력' : ''}`,
+      'aria-label': `${w.week}주차 ${m.homeName} 대 ${m.awayName}, ${statusText}${score}${canOpen ? ', 판별 결과 보기' : ''}`,
       onclick: () => openInput(m.home, m.away),
     },
     side(m.home, m.homeName, 'home'),
@@ -1118,7 +1121,7 @@ function renderMatrix() {
       el(
         'p',
         { class: 'note' },
-        '칸을 누르면 그 경기 결과를 입력하거나 고칩니다. 작은 숫자 2/3은 3판 중 2판만 입력된 경기입니다.',
+        '칸을 누르면 그 경기의 판별 결과를 봅니다(운영진은 비밀번호를 넣고 입력·수정). 작은 숫자 2/3은 3판 중 2판만 입력된 경기입니다.',
       ),
     ),
   ];
@@ -1293,6 +1296,8 @@ function renderInput() {
       'aria-label': label,
       value: value ?? '',
       oninput: markDirty,
+      onclick: onLockedField,
+      onkeydown: onLockedKey,
     });
 
   const scoreRows = TIERS.map((tier) => {
@@ -1321,20 +1326,20 @@ function renderInput() {
     staff.map((p) => el('option', { value: p, selected: p === savedBy }, p)),
   );
 
-  const locked = !state.unlocked;
-  // 잠긴 채 다시 그릴 때(자동 새로고침 등)는 떠 있던 비밀번호 창을 그대로 옮겨 쓴다.
+  const gated = !state.unlocked && state.gateOpen;
+  // 비밀번호 창이 뜬 채 다시 그릴 때(자동 새로고침 등)는 떠 있던 창을 그대로 옮겨 쓴다.
   // 새로 만들면 치던 비밀번호와 확인 중이던 요청이 사라진다.
-  const keptGate = locked ? view.querySelector('.pin-gate') : null;
+  const keptGate = gated ? view.querySelector('.pin-gate') : null;
   if (keptGate?.contains(document.activeElement)) {
     queueMicrotask(() => keptGate.querySelector('input')?.focus({ preventScroll: true }));
   }
   const form = el(
       'form',
-      { class: `panel input-form${locked ? ' is-locked' : ''}`, onsubmit: onSave, novalidate: true, inert: locked },
+      { class: `panel input-form${gated ? ' is-locked' : ''}`, onsubmit: onSave, novalidate: true, inert: gated },
       el(
         'header',
         { class: 'panel-head' },
-        el('h2', { id: 'input-title', tabindex: -1 }, '결과 입력'),
+        el('h2', { id: 'input-title', tabindex: -1 }),
         found
           ? el(
               'span',
@@ -1362,18 +1367,109 @@ function renderInput() {
         { class: 'notice-slot', 'aria-live': 'polite' },
         state.notice ? el('p', { class: `notice ${state.notice.kind}` }, state.notice.text) : null,
       ),
-      el(
-        'p',
-        { class: 'note' },
-        '판마다 따로 저장됩니다. 아직 안 한 판은 비워 두세요. 잘못 넣은 판은 두 칸을 모두 지우고 저장하면 삭제됩니다.',
-      ),
+      el('p', { class: 'note' }),
     );
-  return [el('div', { class: 'input-wrap' }, form, locked ? keptGate ?? pinGate() : null)];
+  syncEditable(form);
+  return [el('div', { class: 'input-wrap' }, form, gated ? keptGate ?? pinGate() : null)];
+}
+
+// 보기 모드(잠김)와 입력 모드(비밀번호 확인 뒤)를 입력판에 반영한다. 적어 둔 점수는 건드리지 않는다.
+// 보기 모드에서는 점수 칸이 읽기 전용이라 눌러도 키보드가 뜨지 않고, 입력자 고르기는 숨긴다.
+function syncEditable(form) {
+  const editable = state.unlocked;
+  form.classList.toggle('is-viewing', !editable);
+  for (const input of form.querySelectorAll('input.goal')) {
+    input.readOnly = !editable;
+    input.placeholder = editable ? '' : '-';
+  }
+  const who = form.querySelector('.who');
+  if (who) who.hidden = !editable;
+  const title = form.querySelector('#input-title');
+  if (title) title.textContent = editable ? '결과 입력' : '경기 결과';
+  const note = form.querySelector('.note');
+  if (note) {
+    note.textContent = editable
+      ? '판마다 따로 저장됩니다. 아직 안 한 판은 비워 두세요. 잘못 넣은 판은 두 칸을 모두 지우고 저장하면 삭제됩니다.'
+      : '점수를 고치거나 저장하려면 클럽 비밀번호가 필요합니다. 점수 칸이나 저장을 누르면 비밀번호를 물어봅니다.';
+  }
 }
 
 // --- 입력 탭 비밀번호 ---
 
-// 입력판 위에 덮는 비밀번호 창. 맞히면 unlockInput, 틀리면 서버 안내를 보여 준다.
+// 보기 모드에서 점수 칸을 누르면 비밀번호 창을 띄운다.
+function onLockedField(event) {
+  if (state.unlocked) return;
+  event.preventDefault();
+  openGate(event.currentTarget.name);
+}
+
+// 보기 모드에서 점수 칸에 글자를 치거나 Enter를 누르면(키보드 사용자) 비밀번호 창을 띄운다. Tab 등은 그대로 둔다.
+function onLockedKey(event) {
+  if (state.unlocked || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+  const { key } = event;
+  if (key.length !== 1 && key !== 'Backspace' && key !== 'Delete' && key !== 'Enter') return;
+  event.preventDefault();
+  openGate(event.currentTarget.name);
+}
+
+// 비밀번호 창을 띄우고 입력판을 흐리게 덮는다.
+// field: 띄운 곳. 점수 칸 이름(ga1 등), 'save'(저장 단추), ''(저장 중 다시 잠금 등). reason: 창에 같이 보여 줄 안내.
+// reveal: 창을 화면 가운데로 끌어오고 비밀번호 칸에 초점을 둔다(페이지를 떠날 때는 끄기).
+// 누른 동작 안에서 바로 초점을 옮겨야 아이폰에서 키보드가 뜬다.
+function openGate(field = '', { reason = '', reveal = true } = {}) {
+  state.gateOpen = true;
+  state.gateFor = field;
+  state.gateError = reason;
+  const form = view.querySelector('form.input-form');
+  if (!form) return;
+  form.setAttribute('inert', '');
+  form.classList.add('is-locked');
+  let gate = view.querySelector('.pin-gate');
+  if (!gate) {
+    gate = pinGate();
+    form.after(gate);
+  } else {
+    gate.querySelector('.gate-msg').textContent = reason;
+  }
+  if (reveal) {
+    gate.scrollIntoView({ block: 'center' });
+    gate.querySelector('input').focus({ preventScroll: true });
+  }
+}
+
+// 비밀번호 창을 닫고 보기 모드로 돌아간다. 확인 중이던 비밀번호 요청은 버린다.
+// 저장하지 못한 점수가 남아 있으면(저장 중 비밀번호가 바뀌어 다시 잠긴 경우 등) 저장된 결과로 되돌린다.
+// 보기 모드에서 저장 안 된 점수가 저장된 것처럼 보이지 않게 하려는 것이다.
+function closeGate() {
+  const field = state.gateFor;
+  state.gateOpen = false;
+  state.gateFor = '';
+  state.gateError = '';
+  state.gateEpoch += 1;
+  state.gateChecking = false;
+  if (state.formDirty) {
+    state.formDirty = false;
+    state.notice = null;
+    render();
+    // 새로 그린 알림 칸이 화면에 붙은 뒤 글을 넣어야 화면 읽기 프로그램이 읽어 준다.
+    setTimeout(() => {
+      if (state.tab === 'input' && !state.unlocked) showNotice('info', '저장하지 않은 점수는 저장된 결과로 되돌렸습니다.');
+    }, 50);
+  }
+  view.querySelector('.pin-gate')?.remove();
+  const form = view.querySelector('form.input-form');
+  if (form) {
+    form.removeAttribute('inert');
+    form.classList.remove('is-locked');
+  }
+  document.body.classList.remove('is-typing');
+  // 띄운 곳(점수 칸·저장 단추)으로 돌아간다. 점수 칸은 읽기 전용이라 키보드가 뜨지 않는다. 그 밖에는 입력판 제목으로.
+  const target = field === 'save' ? form?.querySelector('button[type="submit"]') : field ? form?.elements[field] : null;
+  if (target) target.focus();
+  else view.querySelector('#input-title')?.focus({ preventScroll: true });
+}
+
+// 입력판 위에 덮는 비밀번호 창. 맞히면 unlockInput, 틀리면 서버 안내를 보여 준다. 취소하면 보기 모드로 돌아간다.
 // 입력판의 나머지는 비밀번호를 넣기 전까지 쓸 수 없지만 다른 탭은 그대로 쓸 수 있어 aria-modal은 두지 않는다.
 function pinGate() {
   const input = el('input', {
@@ -1398,12 +1494,20 @@ function pinGate() {
       'aria-labelledby': 'gate-title',
       novalidate: true,
       onsubmit: (event) => onGateSubmit(event, { input, message, button }),
+      onkeydown: (event) => {
+        if (event.key === 'Escape') closeGate();
+      },
     },
     el('div', { class: 'gate-icon', 'aria-hidden': 'true' }),
     el('h3', { id: 'gate-title' }, '비밀번호를 넣어 주세요'),
-    el('p', { id: 'gate-sub', class: 'gate-sub' }, '결과 입력은 클럽 비밀번호가 있어야 열립니다. 입력 탭에 들어올 때마다 물어봅니다.'),
+    el(
+      'p',
+      { id: 'gate-sub', class: 'gate-sub' },
+      '점수를 고치거나 저장하려면 클럽 비밀번호가 필요합니다. 입력 탭을 떠나면 다시 물어봅니다.',
+    ),
     input,
     button,
+    el('button', { type: 'button', class: 'link-btn gate-cancel', onclick: closeGate }, '취소하고 결과만 보기'),
     message,
   );
   // 창이 화면에 붙은 뒤 안내를 넣어야 화면 읽기 프로그램이 읽어 준다.
@@ -1453,42 +1557,61 @@ async function onGateSubmit(event, { input, message, button }) {
   }
 }
 
-// 입력판을 연다. 비밀번호는 저장할 때 쓰도록 메모리에만 둔다.
+// 입력판을 연다(입력 모드). 비밀번호는 저장할 때 쓰도록 메모리에만 둔다.
 function unlockInput(pin) {
   state.unlocked = true;
   state.pin = pin;
   state.gateError = '';
+  state.gateOpen = false;
+  const field = state.gateFor;
+  state.gateFor = '';
+  // 비밀번호 창 안에 초점이 남아 있을 때만 점수 칸으로 초점을 넘긴다(폰이면 화면 키보드가 아직 떠 있다).
+  // 초점이 빠진 뒤(아이폰에서 확인 단추를 누른 경우 등) 옮기면 키보드 없이 탭 막대만 숨는다.
+  const keyboardUp = !!view.querySelector('.pin-gate')?.contains(document.activeElement);
   const form = view.querySelector('form.input-form');
   if (form) {
     form.removeAttribute('inert');
     form.classList.remove('is-locked');
+    syncEditable(form);
   }
   view.querySelector('.pin-gate')?.remove();
   document.body.classList.remove('is-typing');
-  // 저장이 비밀번호 때문에 막혀 다시 잠갔던 경우, 그 저장은 안 된 상태라고 알려 준다.
-  if (state.notice?.pinError) showNotice('info', '비밀번호를 확인했습니다. 저장을 다시 눌러 주세요.');
-  // 키보드가 저절로 뜨지 않게 입력판 제목으로 초점을 옮긴다.
-  view.querySelector('#input-title')?.focus({ preventScroll: true });
+  if (state.formDirty) {
+    // 저장이 비밀번호 때문에 막혀 다시 잠갔던 경우, 그 저장은 안 된 상태라고 알려 준다.
+    // 그사이 이 경기가 바뀌었다는 알림이 떠 있으면 그쪽이 더 중요하므로 그대로 둔다.
+    if (!state.notice?.matchChanged) {
+      showNotice('info', '비밀번호를 확인했습니다. 적어 둔 점수는 아직 저장되지 않았습니다. 저장을 눌러 주세요.');
+    }
+  } else if (field === 'save') {
+    showNotice('ok', '비밀번호를 확인했습니다. 점수를 고친 뒤 저장해 주세요.');
+    state.notice.unlock = true; // 페이지를 떠났다 돌아오면(다시 잠김) 지운다
+  }
+  // 점수 칸을 눌러 열었으면 그 칸으로 초점을 돌려준다. 아니면 키보드가 저절로 뜨지 않게 입력판 제목으로 옮긴다.
+  const target = field && field !== 'save' ? form?.elements[field] : null;
+  if (target && keyboardUp) {
+    target.focus();
+    target.select();
+  } else {
+    view.querySelector('#input-title')?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: 'nearest' });
+  }
 }
 
-// 입력판을 잠근다. 적어 둔 점수는 그대로 두고 비밀번호 창만 다시 덮는다(저장 중 비밀번호가 바뀐 경우 등).
-// reveal: 창을 화면 가운데로 끌어온다(페이지를 떠날 때는 끄기).
-function lockInput(reason = '', { reveal = true } = {}) {
+// 다시 잠근다(보기 모드). 비밀번호는 지우고 확인 중이던 요청은 버린다. 비밀번호 창은 띄우지 않는다.
+function relockInput() {
   state.unlocked = false;
   state.pin = '';
-  state.gateError = reason;
   state.gateEpoch += 1;
   state.gateChecking = false;
   const form = view.querySelector('form.input-form');
-  if (!form) return;
-  form.setAttribute('inert', '');
-  form.classList.add('is-locked');
-  let gate = view.querySelector('.pin-gate');
-  if (!gate) {
-    gate = pinGate();
-    form.after(gate);
-  }
-  if (reveal) gate.scrollIntoView({ block: 'center' });
+  if (form) syncEditable(form);
+}
+
+// 다시 잠그고 비밀번호 창을 띄운다. 적어 둔 점수는 그대로 둔다(저장 중 비밀번호가 바뀐 경우 등).
+// reveal: 창을 화면 가운데로 끌어온다(페이지를 떠날 때는 끄기).
+function lockInput(reason = '', { reveal = true } = {}) {
+  relockInput();
+  openGate('', { reason, reveal });
 }
 
 // --- 입력 동작 ---
@@ -1564,6 +1687,11 @@ async function onSave(event) {
   const form = event.currentTarget;
   const { a, b } = state.pick;
   if (a === b) return;
+  // 보기 모드에서 저장을 누르면 비밀번호부터 묻는다.
+  if (!state.unlocked) {
+    openGate('save');
+    return;
+  }
 
   const inputs = Object.fromEntries(
     TIERS.map((t) => [t, { ga: form.elements[`ga${t}`].value, gb: form.elements[`gb${t}`].value }]),
@@ -1573,10 +1701,6 @@ async function onSave(event) {
   const { games, errors } = buildSaveGames(base, inputs);
   const by = form.elements.by.value;
   const pin = state.pin;
-  if (!state.unlocked) {
-    lockInput('비밀번호를 다시 넣어 주세요.');
-    return;
-  }
   if (errors.length) {
     showNotice('error', errors.map((e) => `${e.tier}티어: ${e.message}`).join(' '));
     return;
@@ -1608,10 +1732,7 @@ async function onSave(event) {
       if (!body.ok) {
         saveFailed(form, body.message || '저장하지 못했습니다.', pairLabel);
         // 그사이 비밀번호가 바뀌었거나 잠겼으면 적어 둔 점수는 두고 비밀번호 창만 다시 띄운다.
-        if ((body.error === 'PIN' || body.error === 'LOCKED') && state.tab === 'input') {
-          if (state.notice) state.notice.pinError = true;
-          lockInput(body.message);
-        }
+        if ((body.error === 'PIN' || body.error === 'LOCKED') && state.tab === 'input') lockInput(body.message);
         return;
       }
       state.dataGen += 1; // 저장 전에 시작된 불러오기 결과가 이 데이터를 덮지 않게
@@ -1650,10 +1771,13 @@ window.addEventListener('hashchange', () => {
   state.tab = tabFromHash();
   if (state.tab !== 'input') state.formDirty = false;
   const moved = state.tab !== previous;
-  // 입력 탭을 떠나면 다시 잠근다. 돌아오면 비밀번호를 또 묻는다.
+  // 입력 탭을 떠나면 다시 잠근다. 돌아오면 보기 모드로 열리고, 고치려면 비밀번호를 또 묻는다.
   if (moved && previous === 'input') {
+    state.notice = null; // 돌아왔을 때 지난 저장 안내가 남아 있지 않게
     state.unlocked = false;
     state.pin = '';
+    state.gateOpen = false;
+    state.gateFor = '';
     state.gateError = '';
     state.gateEpoch += 1;
     state.gateChecking = false;
@@ -1668,14 +1792,18 @@ refreshButton.addEventListener('click', () => load());
 
 // 다른 사이트로 갔다가 '뒤로'로 돌아오면 브라우저가 페이지를 그대로 되살린다(bfcache).
 // 페이지를 떠날 때 잠그고 비밀번호를 지워 두면, 돌아왔을 때 다시 묻는다.
+// 저장하지 않은 점수가 있으면 그대로 두고 비밀번호 창을 덮는다. 없으면 보기 모드로만 돌린다.
 window.addEventListener('pagehide', () => {
   if (!state.unlocked) return;
-  if (state.tab === 'input') {
+  if (state.tab === 'input' && state.formDirty) {
     lockInput('', { reveal: false });
   } else {
-    state.unlocked = false;
-    state.pin = '';
-    state.gateEpoch += 1;
+    relockInput();
+    // 돌아왔을 때 보기 모드 위에 "비밀번호를 확인했습니다" 안내가 남지 않게
+    if (state.notice?.unlock) {
+      state.notice = null;
+      view.querySelector('.notice-slot')?.replaceChildren();
+    }
   }
 });
 
@@ -1694,7 +1822,7 @@ window.addEventListener('resize', () => measureStage());
 // 폰에서 점수·비밀번호 칸에 글자를 넣는 동안(화면 키보드가 떠 있는 동안)은 아래 탭 막대를 치워
 // 입력칸을 가리지 않게 한다(style.css body.is-typing).
 function syncTyping(target) {
-  const typing = !!target?.matches?.('.input-form input, .pin-gate input');
+  const typing = !!target?.matches?.('.input-form input:not([readonly]), .pin-gate input');
   document.body.classList.toggle('is-typing', typing);
 }
 document.addEventListener('focusin', (event) => syncTyping(event.target));
