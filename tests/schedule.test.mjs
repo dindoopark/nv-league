@@ -94,6 +94,7 @@ test('playerFixtures는 한 선수(팀·티어)의 9주 일정을 그 판 기준
     away: byName('어색즈'),
     oppPlayer: '노인정2',
     playedBy: '',
+    inherited: false,
     ga: 1,
     gb: 1,
     outcome: 'd',
@@ -118,9 +119,22 @@ test('playerFixtures: 치른 판은 기록된 이름을 쓰고, 지금 명단과
   const played = [{ a: byName('노인정'), b: byName('어색즈'), tier: 1, ga: 0, gb: 3, pa: '옛노인', pb: '옛어색' }];
   const view = scheduleView(SCHEDULE, TEAMS, played);
   const mine = playerFixtures(view, TEAMS, played, byName('어색즈'), 1)[0];
-  assert.deepEqual([mine.oppPlayer, mine.playedBy, mine.outcome], ['옛노인', '옛어색', 'w']);
+  // 옛어색은 명단 어디에도 없다(탈퇴) → 이 판은 내 기록에 합쳐진다
+  assert.deepEqual([mine.oppPlayer, mine.playedBy, mine.inherited, mine.outcome], ['옛노인', '옛어색', true, 'w']);
   const same = [{ ...played[0], pb: '어색즈1' }];
-  assert.equal(playerFixtures(scheduleView(SCHEDULE, TEAMS, same), TEAMS, same, byName('어색즈'), 1)[0].playedBy, '');
+  const own = playerFixtures(scheduleView(SCHEDULE, TEAMS, same), TEAMS, same, byName('어색즈'), 1)[0];
+  assert.deepEqual([own.playedBy, own.inherited], ['', false]);
+  // 명단에 있는 사람(어색즈2)이 이 자리에서 뛴 판은 그 사람 기록 → inherited 아님
+  const moved = [{ ...played[0], pb: '어색즈2' }];
+  const other = playerFixtures(scheduleView(SCHEDULE, TEAMS, moved), TEAMS, moved, byName('어색즈'), 1)[0];
+  assert.deepEqual([other.playedBy, other.inherited], ['어색즈2', false]);
+});
+
+test('예시 데이터: 3팀 3티어는 1·2주차 쟁이가 뛰고 명단은 감성(탈퇴 이어받기 예시)', () => {
+  const team3 = SAMPLE_DATA.teams.find((t) => t.name === '달려라콜여사');
+  assert.equal(team3.players[2], '감성');
+  const t3 = SAMPLE_DATA.games.filter((g) => g.tier === 3 && (g.a === team3.no || g.b === team3.no));
+  assert.deepEqual(t3.map((g) => (g.a === team3.no ? g.pa : g.pb)), ['쟁이', '쟁이']);
 });
 
 test('playerFixtures: 상대 팀 이름을 시트에서 못 찾으면 opponent는 null이고 예정으로 둔다', () => {

@@ -1059,8 +1059,8 @@ function renderPersonalSchedule(sv) {
   const name = team.players[tier - 1];
   const list = playerFixtures(sv, teams, games, team.no, tier);
   const lost = fixturesLost(list);
-  // 기록은 이 사람이 실제로 뛴 판(개인 탭과 같은 기준). 일정 줄은 지금 자리(팀·티어) 기준이라,
-  // 교체 전 다른 사람이 뛴 판('○○ 출전')은 일정에는 나오지만 기록에는 들어가지 않는다.
+  // 기록은 개인 탭과 같은 기준: 이 사람이 뛴 판 + 탈퇴한 앞 선수에게서 이어받은 판. 일정 줄은 지금 자리(팀·티어)
+  // 기준이라, 교체 전 다른 사람이 뛴 판은 '○○ 출전'으로 나온다. 그 사람이 아직 명단에 있으면(팀·티어 이동) 기록에서 뺀다.
   const { w, d, l, pts, diff } = playerRecord(teams, games, name);
   const left = list.filter((f) => f.outcome === 'todo' && f.opponent != null);
   const next = left[0];
@@ -1139,15 +1139,21 @@ function personalFixtureItem(f) {
     el('span', { class: 'fx-tag' }, label),
   ];
   const canOpen = f.home != null && f.away != null;
+  // 탈퇴한 앞 선수에게서 이어받은 판은 내 기록에 들어가므로 흐리게 하지 않는다.
+  const excluded = f.playedBy && !f.inherited;
   return el(
     'li',
-    { class: `fx o-${unknown ? 'unknown' : f.outcome}${f.current ? ' is-current' : ''}${f.playedBy ? ' is-sub' : ''}` },
+    { class: `fx o-${unknown ? 'unknown' : f.outcome}${f.current ? ' is-current' : ''}${excluded ? ' is-sub' : ''}` },
     canOpen
       ? el(
           'button',
           { type: 'button', class: 'fx-btn', onclick: () => openInput(f.home, f.away) },
           body,
-          el('span', { class: 'sr-only' }, `, ${f.week}주차 경기 판별 결과 보기${f.playedBy ? ', 내 기록에는 들어가지 않음' : ''}`),
+          el(
+            'span',
+            { class: 'sr-only' },
+            `, ${f.week}주차 경기 판별 결과 보기${excluded ? ', 내 기록에는 들어가지 않음' : f.playedBy ? ', 내 기록에 합쳐짐' : ''}`,
+          ),
         )
       : el('div', { class: 'fx-btn' }, body),
   );
@@ -1321,9 +1327,28 @@ function renderMatrix() {
 
 // --- 개인 탭 ---
 
+// 이어받은 판(탈퇴한 앞 선수가 이 자리에서 뛴 판)을 '1·2주 쟁이 출전'처럼 줄인다.
+// 대진표에서 주차를 못 찾은 판이 섞이면 '쟁이 2판 출전'.
+function inheritedNote(p, sv) {
+  const weeksBy = new Map();
+  for (const { name, opponent } of p.inherited) {
+    const week = sv.weeks.find((w) =>
+      w.matches.some((m) => (m.home === p.teamNo && m.away === opponent) || (m.home === opponent && m.away === p.teamNo)),
+    )?.week;
+    if (!weeksBy.has(name)) weeksBy.set(name, []);
+    weeksBy.get(name).push(week);
+  }
+  return [...weeksBy]
+    .map(([name, weeks]) =>
+      weeks.every((w) => w != null) ? `${weeks.sort((x, y) => x - y).join('·')}주 ${name} 출전` : `${name} ${weeks.length}판 출전`,
+    )
+    .join(', ');
+}
+
 function renderPlayers() {
   const { teams, games } = state.data;
   const stats = computePlayerStats(teams, games);
+  const sv = scheduleView(SCHEDULE, teams, games);
   return [
     el('header', { class: 'sec-head' }, el('p', { class: 'kicker' }, 'Players'), el('h2', {}, '개인 기록'), el('p', { class: 'sec-note' }, '같은 티어끼리 붙은 판만 모은 기록입니다.')),
     ...TIERS.map((tier) =>
@@ -1371,6 +1396,7 @@ function renderPlayers() {
                       teamLogo(team ?? { no: p.teamNo, name: '' }, { size: 16 }),
                       team?.name ?? `${p.teamNo}팀`,
                     ),
+                    p.inherited.length ? el('span', { class: 'p-from' }, inheritedNote(p, sv)) : null,
                   ),
                   el('td', { class: 'c-wdl' }, `${p.w}-${p.d}-${p.l}`),
                   el('td', { class: 'c-pts' }, p.pts),

@@ -260,19 +260,49 @@ test('개인 기록은 티어별로 모든 명단 선수를 넣고 판 결과를
   const stats = computePlayerStats(TEAMS, [
     game(1, 2, 1, 3, 1), // 스톰 승
     game(1, 3, 1, 0, 0), // 스톰 무
-    { ...game(4, 5, 1, 2, 2), pa: '대타' }, // 명단에 없는 이름으로 저장된 판
+    game(4, 5, 1, 2, 2), // 태현 무
   ]);
-  assert.equal(stats[1].length, 10);
+  assert.equal(stats[1].length, 9);
   const storm = stats[1].find((p) => p.name === '스톰');
   assert.deepEqual(
     [storm.rank, storm.w, storm.d, storm.l, storm.pts, storm.scored, storm.conceded, storm.diff, storm.teamNo],
     [1, 1, 1, 0, 4, 3, 1, 2, 1],
   );
-  const sub = stats[1].find((p) => p.name === '대타');
-  assert.deepEqual([sub.teamNo, sub.d, sub.pts], [4, 1, 1]);
-  assert.equal(stats[1].find((p) => p.name === '태현').d, 0);
+  assert.deepEqual(storm.inherited, []);
+  assert.equal(stats[1].find((p) => p.name === '태현').d, 1);
+  assert.equal(stats[1].find((p) => p.name === '우설').d, 0);
   assert.equal(stats[2].length, 9);
   assert.equal(stats[3].length, 9);
+});
+
+test('개인 기록: 명단에서 빠진 선수(탈퇴)의 판은 그 자리를 이어받은 지금 선수 줄에 합치고 inherited에 남긴다', () => {
+  // 3팀 3티어: 쟁이가 1·2번째 판을 뛰고 탈퇴, 감성이 이어받음
+  const teams = TEAMS.map((t) => (t.no === 3 ? { ...t, players: ['병희', '콜드', '감성'] } : t));
+  const stats = computePlayerStats(teams, [
+    { ...game(3, 9, 3, 3, 4), pa: '쟁이' }, // 쟁이 패
+    { ...game(5, 3, 3, 0, 1), pb: '쟁이' }, // 쟁이 승(3팀이 원정)
+    { ...game(3, 8, 3, 2, 2), pa: '감성' }, // 감성 무
+  ]);
+  assert.equal(stats[3].length, 9);
+  assert.equal(stats[3].find((p) => p.name === '쟁이'), undefined);
+  const gs = stats[3].find((p) => p.name === '감성');
+  assert.deepEqual([gs.teamNo, gs.w, gs.d, gs.l, gs.pts, gs.scored, gs.conceded], [3, 1, 1, 1, 4, 6, 6]);
+  assert.deepEqual(gs.inherited, [
+    { name: '쟁이', opponent: 9 },
+    { name: '쟁이', opponent: 5 },
+  ]);
+  // 상대 쪽은 그대로
+  assert.equal(stats[3].find((p) => p.name === '수프러차').w, 1);
+  assert.deepEqual(playerRecord(teams, [{ ...game(3, 9, 3, 3, 4), pa: '쟁이' }], '감성'), {
+    w: 0, d: 0, l: 1, pts: 0, scored: 3, conceded: 4, diff: -1,
+  });
+});
+
+test('개인 기록: 그 자리 선수 칸이 비어 있으면 명단에 없는 이름도 자기 줄로 남긴다', () => {
+  const teams = TEAMS.map((t) => (t.no === 4 ? { ...t, players: ['', t.players[1], t.players[2]] } : t));
+  const stats = computePlayerStats(teams, [{ ...game(4, 5, 1, 2, 2), pa: '대타' }]);
+  const sub = stats[1].find((p) => p.name === '대타');
+  assert.deepEqual([sub.teamNo, sub.d, sub.pts, sub.inherited.length], [4, 1, 1, 0]);
 });
 
 test('applySave는 선수가 바뀐 뒤 예전 판을 고쳐도 그 판의 선수 이름을 지킨다', () => {
@@ -315,15 +345,17 @@ test('개인 기록은 승점 → 골득실 → 다득점 순으로 정렬하고
   );
 });
 
-test('playerRecord는 그 이름으로 기록된 판만 모은다(중간 교체·티어 이동이 있어도 사람 기준)', () => {
+test('playerRecord는 개인 탭과 같은 기준: 티어를 옮겨도 사람 기준, 탈퇴한 앞 선수의 판은 이어받은 사람에게', () => {
   const games = [
-    { ...game(7, 4, 1, 2, 0), pb: '태현', pa: '옛우설' }, // 7팀 1티어 자리에서 옛우설이 뛴 판
-    game(7, 1, 1, 1, 1), // 지금 명단의 우설이 뛴 판(pa 없음 → 명단 이름)
-    { ...game(4, 2, 2, 3, 1), pa: '태현' }, // 태현이 2티어로 옮겨 뛴 판
+    { ...game(7, 4, 1, 2, 0), pb: '태현', pa: '옛우설' }, // 7팀 1티어 자리에서 (명단에 없는) 옛우설이 뛴 판
+    game(7, 1, 1, 1, 1), // 지금 명단의 우설이 뛴 판
+    { ...game(4, 2, 2, 3, 1), pa: '태현' }, // 태현이 2티어로 옮겨 뛴 판(태현은 명단에 있으니 태풍에게 안 감)
   ];
-  assert.deepEqual(playerRecord(TEAMS, games, '우설'), { w: 0, d: 1, l: 0, pts: 1, scored: 1, conceded: 1, diff: 0 });
-  assert.deepEqual(playerRecord(TEAMS, games, '옛우설'), { w: 1, d: 0, l: 0, pts: 3, scored: 2, conceded: 0, diff: 2 });
+  // 옛우설의 승리 + 우설의 무승부
+  assert.deepEqual(playerRecord(TEAMS, games, '우설'), { w: 1, d: 1, l: 0, pts: 4, scored: 3, conceded: 1, diff: 2 });
+  assert.deepEqual(playerRecord(TEAMS, games, '옛우설'), { w: 0, d: 0, l: 0, pts: 0, scored: 0, conceded: 0, diff: 0 });
   // 1티어에서 진 판과 2티어에서 이긴 판을 더한다
   assert.deepEqual(playerRecord(TEAMS, games, '태현'), { w: 1, d: 0, l: 1, pts: 3, scored: 3, conceded: 3, diff: 0 });
+  assert.deepEqual(playerRecord(TEAMS, games, '태풍'), { w: 0, d: 0, l: 0, pts: 0, scored: 0, conceded: 0, diff: 0 });
   assert.deepEqual(playerRecord(TEAMS, games, '없는사람'), { w: 0, d: 0, l: 0, pts: 0, scored: 0, conceded: 0, diff: 0 });
 });

@@ -215,28 +215,44 @@ export function applySave(games, teams, request, nowIso) {
   return [...next.values()];
 }
 
+// 지금 명단 어딘가에 있는 이름들
+export function rosterNames(teams) {
+  return new Set(teams.flatMap((t) => t.players).filter(Boolean));
+}
+
 // 티어별 개인 기록. 판에 저장된 선수 이름(pa/pb) 기준으로 모으고,
 // 명단에 있지만 아직 판이 없는 선수도 0으로 넣는다.
+// 명단 어디에도 없는 이름(탈퇴한 선수, 바꾸기 전 닉네임)으로 기록된 판은 그 자리(팀·티어)를
+// 이어받은 지금 선수의 기록에 합치고, inherited에 { name, opponent }로 남긴다.
+// 명단에 있는 사람이 다른 자리에서 뛴 판(팀·티어 이동)은 합치지 않고 그 사람 기록으로 둔다.
 export function computePlayerStats(teams, games) {
   const team = (no) => teams.find((t) => t.no === no);
+  const rostered = rosterNames(teams);
   const result = {};
   for (const tier of TIERS) {
     const records = new Map();
     const ensure = (name, teamNo) => {
-      if (!records.has(name)) records.set(name, { name, teamNo, ...emptyRecord() });
+      if (!records.has(name)) records.set(name, { name, teamNo, ...emptyRecord(), inherited: [] });
       return records.get(name);
     };
     for (const t of teams) {
       const name = t.players[tier - 1];
       if (name) ensure(name, t.no);
     }
+    const addSide = (teamNo, played, opponent, scored, conceded) => {
+      const seat = team(teamNo).players[tier - 1];
+      const left = !!played && !!seat && !rostered.has(played);
+      const name = left ? seat : played || seat;
+      if (!name) return;
+      const rec = ensure(name, teamNo);
+      addResult(rec, scored, conceded);
+      if (left) rec.inherited.push({ name: played, opponent });
+    };
     for (const g of uniqueGames(games)) {
       // 팀 순위·경기표와 같은 판만 센다(명단에 없는 팀과의 판은 뺀다).
       if (g.tier !== tier || g.a === g.b || !team(g.a) || !team(g.b)) continue;
-      const nameA = g.pa || team(g.a)?.players[tier - 1];
-      const nameB = g.pb || team(g.b)?.players[tier - 1];
-      if (nameA) addResult(ensure(nameA, g.a), g.ga, g.gb);
-      if (nameB) addResult(ensure(nameB, g.b), g.gb, g.ga);
+      addSide(g.a, g.pa, g.b, g.ga, g.gb);
+      addSide(g.b, g.pb, g.a, g.gb, g.ga);
     }
     const rows = [...records.values()].sort((x, y) => compareRecords(x, y) || x.teamNo - y.teamNo);
     assignRanks(rows);
@@ -245,8 +261,8 @@ export function computePlayerStats(teams, games) {
   return result;
 }
 
-// 한 사람의 판 기록. 개인 기록 탭과 같은 기준(판에 기록된 이름)이라, 중간에 교체됐거나
-// 팀·티어를 옮겼어도 그 사람이 실제로 뛴 판만 모인다. 여러 티어에서 뛰었으면 모두 더한다.
+// 한 사람의 판 기록. 개인 기록 탭과 같은 기준이라, 팀·티어를 옮겼어도 그 사람이 뛴 판이 모이고
+// 탈퇴한 앞 선수의 자리를 이어받았으면 그 앞 선수가 뛴 판도 더한다. 여러 티어에서 뛰었으면 모두 더한다.
 export function playerRecord(teams, games, name) {
   const total = emptyRecord();
   const stats = computePlayerStats(teams, games);

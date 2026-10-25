@@ -4,7 +4,7 @@
 const ROSTER = [
   ['시그니엘', '스톰', '자본', '현우'],
   ['노인정', '태현', '태풍', '로우'],
-  ['달려라콜여사', '병희', '콜드', '쟁이'],
+  ['달려라콜여사', '병희', '콜드', '감성'],
   ['구육칠즈', '범수', '하늘', '맹구'],
   ['사자는어흥', '레오', '로마', '대전'],
   ['크카모원정대', '크카모', '원형', '정민'],
@@ -28,8 +28,13 @@ const RESULTS = [
   ['어색즈', '대갈장군', [1, 1], [2, 0], [0, 0], 3],
 ];
 
+// 시즌 중 탈퇴: 그 자리를 이 주차까지 뛴 앞 선수(명단에는 이어받은 선수). 3팀 3티어는 2주차까지 쟁이.
+const FORMER = [{ team: '달려라콜여사', tier: 3, name: '쟁이', untilWeek: 2 }];
+
 const teams = ROSTER.map(([name, ...players], i) => ({ no: i + 1, name, players }));
 const teamByName = (name) => teams.find((t) => t.name === name);
+const playerAt = (team, tier, week) =>
+  FORMER.find((f) => f.team === team.name && f.tier === tier && week <= f.untilWeek)?.name ?? team.players[tier - 1];
 
 export const SAMPLE_DATA = {
   teams,
@@ -47,8 +52,8 @@ export const SAMPLE_DATA = {
               tier: i + 1,
               ga: score[0],
               gb: score[1],
-              pa: home.players[i],
-              pb: away.players[i],
+              pa: playerAt(home, i + 1, week),
+              pb: playerAt(away, i + 1, week),
               at,
               by: '조이',
             },

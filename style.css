@@ -2631,7 +2631,8 @@ table {
   white-space: nowrap;
 }
 
-/* 이 자리에서 다른 사람이 뛴 판: 내 기록에 들어가지 않으므로 점수·결과를 흐리게 */
+/* 이 자리에서 아직 명단에 있는 다른 사람이 뛴 판(팀·티어 이동): 내 기록에 들어가지 않으므로 점수·결과를 흐리게.
+   탈퇴한 앞 선수에게서 이어받은 판은 내 기록에 합쳐지므로 흐리게 하지 않는다. */
 .fx.is-sub .fx-score,
 .fx.is-sub .fx-tag {
   opacity: 0.5;
@@ -2873,6 +2874,18 @@ table {
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
+}
+
+/* 탈퇴한 앞 선수에게서 이어받은 판 안내('1·2주 쟁이 출전') */
+.p-from {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .medal {
