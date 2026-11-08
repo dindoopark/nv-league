@@ -53,6 +53,8 @@ const state = {
   scrollWeek: false, // 일정 탭에 들어오면 이번 주로 스크롤
   scheduleLook: storageGet(SCHED_LOOK_KEY) === 'player' ? 'player' : 'weeks',
   me: storageGet(ME_KEY) ?? '', // 개인 일정에서 고른 선수 이름. 이름으로 기억해 팀을 옮겨도 따라간다.
+  playerTier: 0, // 0이면 개인 기록 전체, 1~3이면 그 티어만
+  resultOrigin: null, // 결과를 열기 직전 목록의 위치와 누른 경기
 };
 
 const view = document.getElementById('view');
@@ -273,6 +275,7 @@ function render() {
     const active = link.dataset.tab === state.tab;
     link.classList.toggle('active', active);
     link.setAttribute('aria-selected', String(active));
+    link.tabIndex = active ? 0 : -1;
   }
   if (!state.data) {
     hero.hidden = true;
@@ -1310,7 +1313,8 @@ function renderMatrix() {
         el('h2', {}, '경기표'),
         el('span', { class: 'muted' }, '행 팀 기준 승점'),
       ),
-      el('div', { class: 'matrix-wrap' }, el('table', { class: 'matrix' }, head, el('tbody', {}, rows))),
+      el('p', { class: 'note matrix-hint' }, '표를 좌우로 밀어 상대 팀을 찾으세요. 칸을 누르면 경기 결과가 열립니다.'),
+      el('div', { class: 'matrix-wrap', tabindex: 0, role: 'region', 'aria-label': '경기표, 좌우로 스크롤' }, el('table', { class: 'matrix' }, head, el('tbody', {}, rows))),
       el(
         'ul',
         { class: 'team-legend', 'aria-label': '로고 안내' },
@@ -1350,11 +1354,22 @@ function renderPlayers() {
   const stats = computePlayerStats(teams, games);
   const sv = scheduleView(SCHEDULE, teams, games);
   return [
-    el('header', { class: 'sec-head' }, el('p', { class: 'kicker' }, 'Players'), el('h2', {}, '개인 기록'), el('p', { class: 'sec-note' }, '같은 티어끼리 붙은 판만 모은 기록입니다.')),
-    ...TIERS.map((tier) =>
+    el('header', { class: 'sec-head' }, el('p', { class: 'kicker' }, 'Players'), el('h2', {}, '개인 기록'), el('p', { class: 'sec-note' }, '같은 티어끼리 붙은 판만 모은 기록입니다. 선수 이름을 누르면 개인 일정을 봅니다.')),
+    el('div', { class: 'player-filter seg', role: 'group', 'aria-label': '개인 기록 티어' },
+      [0, ...TIERS].map((tier) => el('button', {
+        type: 'button', class: 'seg-btn', 'data-player-tier': tier,
+        'aria-pressed': String(state.playerTier === tier),
+        onclick: () => {
+          state.playerTier = tier;
+          render();
+          view.querySelector(`[data-player-tier="${tier}"]`)?.focus({ preventScroll: true });
+        },
+      }, tier ? `${tier}티어` : '전체')),
+    ),
+    ...TIERS.filter((tier) => !state.playerTier || tier === state.playerTier).map((tier) =>
       el(
         'section',
-        { class: `panel tier-panel t${tier}`, 'aria-labelledby': `tier-${tier}` },
+        { class: `panel tier-panel t${tier}${state.playerTier ? ' is-filtered' : ''}`, 'aria-labelledby': `tier-${tier}` },
         el(
           'header',
           { class: 'tier-head' },
@@ -1389,7 +1404,10 @@ function renderPlayers() {
                   el(
                     'th',
                     { scope: 'row', class: 'c-team' },
-                    el('strong', {}, p.name),
+                    findPlayer(teams, p.name) ? el('button', {
+                      type: 'button', class: 'player-link', 'aria-label': `${p.name} 개인 일정 보기`,
+                      onclick: () => openPlayerSchedule(p.name),
+                    }, p.name) : el('strong', {}, p.name),
                     el(
                       'span',
                       { class: 'p-team' },
@@ -1411,6 +1429,16 @@ function renderPlayers() {
       ),
     ),
   ];
+}
+
+function openPlayerSchedule(name) {
+  // 현 명단에 있는 선수만 일정에 연결한다.
+  if (!findPlayer(state.data.teams, name)) return;
+  state.me = name;
+  state.scheduleLook = 'player';
+  storageSet(ME_KEY, name);
+  storageSet(SCHED_LOOK_KEY, 'player');
+  location.hash = '#schedule';
 }
 
 // --- 입력 탭 ---
@@ -1588,7 +1616,12 @@ function renderInput() {
       el('p', { class: 'note' }),
     );
   syncEditable(form);
-  return [el('div', { class: 'input-wrap' }, form, gated ? keptGate ?? pinGate() : null)];
+  const originLabels = { standings: '순위로', schedule: '일정으로', matrix: '경기표로', players: '개인 기록으로' };
+  const origin = state.resultOrigin;
+  return [
+    origin ? el('a', { class: 'result-back', href: `#${origin.tab}` }, `← ${originLabels[origin.tab]} 돌아가기`) : null,
+    el('div', { class: 'input-wrap' }, form, gated ? keptGate ?? pinGate() : null),
+  ];
 }
 
 // 보기 모드(잠김)와 입력 모드(비밀번호 확인 뒤)를 입력판에 반영한다. 적어 둔 점수는 건드리지 않는다.
@@ -1839,6 +1872,15 @@ function markDirty() {
 }
 
 function openInput(a, b) {
+  if (state.tab !== 'input') {
+    state.resultOrigin = {
+      tab: state.tab,
+      scrollY: window.scrollY,
+      matrixX: view.querySelector('.matrix-wrap')?.scrollLeft ?? 0,
+      label: view.contains(document.activeElement) ? document.activeElement.getAttribute('aria-label') : null,
+      text: view.contains(document.activeElement) && document.activeElement.tagName === 'BUTTON' ? document.activeElement.textContent : null,
+    };
+  }
   state.pick = { a, b };
   state.formDirty = false;
   state.notice = null;
@@ -1979,6 +2021,9 @@ async function onSave(event) {
 
 // --- 시작 ---
 
+// 해시 탭의 위치는 아래에서 복원한다. 브라우저의 자동 복원이 다시 덮어쓰지 않게 한다.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
 function tabFromHash() {
   const name = location.hash.slice(1);
   return TABS.includes(name) ? name : 'standings';
@@ -1987,10 +2032,12 @@ function tabFromHash() {
 window.addEventListener('hashchange', () => {
   const previous = state.tab;
   state.tab = tabFromHash();
+  const origin = previous === 'input' && state.resultOrigin?.tab === state.tab ? state.resultOrigin : null;
   if (state.tab !== 'input') state.formDirty = false;
   const moved = state.tab !== previous;
   // 입력 탭을 떠나면 다시 잠근다. 돌아오면 보기 모드로 열리고, 고치려면 비밀번호를 또 묻는다.
   if (moved && previous === 'input') {
+    state.resultOrigin = null;
     state.notice = null; // 돌아왔을 때 지난 저장 안내가 남아 있지 않게
     state.unlocked = false;
     state.pin = '';
@@ -2000,13 +2047,35 @@ window.addEventListener('hashchange', () => {
     state.gateEpoch += 1;
     state.gateChecking = false;
   }
-  if (moved) state.scrollWeek = state.tab === 'schedule';
+  if (moved) state.scrollWeek = state.tab === 'schedule' && !origin;
   render();
+  if (origin) {
+    const matrix = view.querySelector('.matrix-wrap');
+    if (matrix) matrix.scrollLeft = origin.matrixX;
+    const trigger = [...view.querySelectorAll('button, [aria-label]')].find((node) =>
+      origin.label ? node.getAttribute('aria-label') === origin.label : origin.text && node.textContent === origin.text,
+    );
+    trigger?.focus({ preventScroll: true });
+    window.scrollTo(0, origin.scrollY);
+    return;
+  }
   // 탭을 옮기면 맨 위에서 시작한다(일정 탭은 render가 이번 주로 스크롤).
   if (moved && state.tab !== 'schedule') window.scrollTo(0, 0);
 });
 
 refreshButton.addEventListener('click', () => load());
+
+// 탭은 좌우 화살표와 Home·End로도 이동한다. 홈페이지 링크는 일반 링크로 둔다.
+document.querySelector('.league-tabs').addEventListener('keydown', (event) => {
+  const current = event.target.closest('[data-tab]');
+  if (!current || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const tabs = [...document.querySelectorAll('[data-tab]')];
+  const index = tabs.indexOf(current);
+  const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+  next.focus();
+  next.click();
+});
 
 // 다른 사이트로 갔다가 '뒤로'로 돌아오면 브라우저가 페이지를 그대로 되살린다(bfcache).
 // 페이지를 떠날 때 잠그고 비밀번호를 지워 두면, 돌아왔을 때 다시 묻는다.
