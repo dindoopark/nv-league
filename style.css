@@ -3705,7 +3705,7 @@ input:focus {
   }
 
   #view[data-tab='players'] {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: start;
   }
 
@@ -3714,7 +3714,7 @@ input:focus {
     grid-column: 1 / -1;
   }
 
-  /* 두 표를 나란히 둘 때도 평균 승점과 기존 숫자 칸을 유지한다. */
+  /* 티어를 하나 골랐을 때 쓰는 숫자 칸 너비. */
   #view[data-tab='players'] .players .c-num {
     width: 34px;
   }
@@ -3729,6 +3729,41 @@ input:focus {
 
   #view[data-tab='players'] .players .c-pts {
     width: 38px;
+  }
+
+  /* 전체 보기: 이름 칸을 줄여 세 티어를 한 줄에 놓는다. */
+  #view[data-tab='players'] .tier-panel:not(.is-filtered) .players {
+    min-width: 330px;
+  }
+
+  #view[data-tab='players'] .tier-panel:not(.is-filtered) .c-rank,
+  #view[data-tab='players'] .tier-panel:not(.is-filtered) .c-num,
+  #view[data-tab='players'] .tier-panel:not(.is-filtered) .c-pts {
+    width: 28px;
+  }
+
+  #view[data-tab='players'] .tier-panel:not(.is-filtered) .c-num:last-child {
+    width: 42px;
+  }
+
+  #view[data-tab='players'] .tier-panel:not(.is-filtered) .medal {
+    width: 24px;
+    height: 24px;
+  }
+
+  #view[data-tab='players'] .tier-panel:not(.is-filtered) .c-wdl {
+    width: 46px;
+  }
+
+  #view[data-tab='players'] .tier-panel:not(.is-filtered) .c-avg {
+    width: 60px;
+  }
+
+  #view[data-tab='players'] .tier-panel:not(.is-filtered) .player-link {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
