@@ -1354,7 +1354,8 @@ function renderPlayers() {
   const stats = computePlayerStats(teams, games);
   const sv = scheduleView(SCHEDULE, teams, games);
   return [
-    el('header', { class: 'sec-head' }, el('p', { class: 'kicker' }, 'Players'), el('h2', {}, '개인 기록'), el('p', { class: 'sec-note' }, '같은 티어끼리 붙은 판만 모은 기록입니다. 선수 이름을 누르면 개인 일정을 봅니다.')),
+    el('header', { class: 'sec-head' }, el('p', { class: 'kicker' }, 'Players'), el('h2', {}, '개인 기록'), el('p', { class: 'sec-note' }, '같은 티어끼리 붙은 판만 모은 기록입니다. 선수 이름을 누르면 개인 일정을 봅니다.'),
+      el('p', { class: 'sec-note' }, '평균 승점은 총 승점 ÷ 판 수(승+무+패)입니다. 순위는 판당 평균 승점 → 판당 득실차 → 판당 득점 순으로, 반올림 전 값을 비교합니다. 미경기 선수는 아래에 -로 표시합니다. 좁은 화면에서는 표를 좌우로 밀어 보세요.')),
     el('div', { class: 'player-filter seg', role: 'group', 'aria-label': '개인 기록 티어' },
       [0, ...TIERS].map((tier) => el('button', {
         type: 'button', class: 'seg-btn', 'data-player-tier': tier,
@@ -1379,14 +1380,16 @@ function renderPlayers() {
         ),
         el(
           'div',
-          { class: 'table-wrap' },
+          { class: 'table-wrap', tabindex: 0, role: 'region', 'aria-label': `${tier}티어 개인 기록표, 좌우로 스크롤` },
           el(
             'table',
             { class: 'players' },
+            el('caption', { class: 'sr-only' }, `${tier}티어 개인 순위. 판당 평균 승점, 판당 득실차, 판당 득점 순.`),
             headRow([
               ['순위', 'c-rank'],
               ['선수', 'c-team'],
               ['승-무-패', 'c-wdl'],
+              ['평균 승점', 'c-avg'],
               ['승점', 'c-pts'],
               ['득점', 'c-num'],
               ['실점', 'c-num'],
@@ -1400,7 +1403,7 @@ function renderPlayers() {
                 return el(
                   'tr',
                   {},
-                  el('td', { class: 'c-rank' }, el('span', { class: `medal m${p.rank}` }, p.rank)),
+                  el('td', { class: 'c-rank' }, p.rank == null ? '-' : el('span', { class: `medal m${p.rank}` }, p.rank)),
                   el(
                     'th',
                     { scope: 'row', class: 'c-team' },
@@ -1417,6 +1420,7 @@ function renderPlayers() {
                     p.inherited.length ? el('span', { class: 'p-from' }, inheritedNote(p, sv)) : null,
                   ),
                   el('td', { class: 'c-wdl' }, `${p.w}-${p.d}-${p.l}`),
+                  el('td', { class: 'c-avg', title: p.played ? `${p.pts}점 ÷ ${p.played}판` : '미경기' }, p.avgPts == null ? '-' : p.avgPts.toFixed(2)),
                   el('td', { class: 'c-pts' }, p.pts),
                   el('td', { class: 'c-num' }, p.scored),
                   el('td', { class: 'c-num' }, p.conceded),

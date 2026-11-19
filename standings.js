@@ -47,10 +47,18 @@ function compareRecords(x, y) {
   return y.pts - x.pts || y.diff - x.diff || y.scored - x.scored;
 }
 
+// 개인은 판당 승점 → 판당 득실차 → 판당 득점. 교차곱으로 반올림 없이 비교한다.
+function comparePlayerRecords(x, y) {
+  if (!x.played || !y.played) return Number(!x.played) - Number(!y.played);
+  return y.pts * x.played - x.pts * y.played
+    || y.diff * x.played - x.diff * y.played
+    || y.scored * x.played - x.scored * y.played;
+}
+
 // 공동 순위(1, 2, 2, 4): 확실히 앞선 수 + 1
-function assignRanks(rows) {
+function assignRanks(rows, compare = compareRecords) {
   for (const row of rows) {
-    row.rank = 1 + rows.filter((other) => compareRecords(other, row) < 0).length;
+    row.rank = 1 + rows.filter((other) => compare(other, row) < 0).length;
   }
 }
 
@@ -254,8 +262,12 @@ export function computePlayerStats(teams, games) {
       addSide(g.a, g.pa, g.b, g.ga, g.gb);
       addSide(g.b, g.pb, g.a, g.gb, g.ga);
     }
-    const rows = [...records.values()].sort((x, y) => compareRecords(x, y) || x.teamNo - y.teamNo);
-    assignRanks(rows);
+    const rows = [...records.values()].map((rec) => {
+      const played = rec.w + rec.d + rec.l;
+      return { ...rec, played, avgPts: played ? rec.pts / played : null };
+    }).sort((x, y) => comparePlayerRecords(x, y) || x.teamNo - y.teamNo);
+    assignRanks(rows.filter((rec) => rec.played > 0), comparePlayerRecords);
+    for (const rec of rows) if (!rec.played) rec.rank = null;
     result[tier] = rows;
   }
   return result;

@@ -2945,6 +2945,7 @@ table {
 }
 
 .players {
+  min-width: 416px;
   table-layout: fixed;
   font-size: 14px;
 }
@@ -2968,6 +2969,11 @@ table {
   width: 54px;
 }
 
+.players .c-avg {
+  width: 68px;
+  white-space: nowrap;
+}
+
 .players .c-pts {
   width: 36px;
 }
@@ -2985,7 +2991,7 @@ table {
   font-weight: 750;
 }
 
-.players tbody .c-pts {
+.players tbody .c-avg {
   font-size: 16px;
   font-weight: 900;
   color: var(--tier);
@@ -3645,6 +3651,10 @@ input:focus {
     width: 80px;
   }
 
+  .players .c-avg {
+    width: 76px;
+  }
+
   .players .c-pts {
     width: 56px;
   }
@@ -3695,7 +3705,7 @@ input:focus {
   }
 
   #view[data-tab='players'] {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
   }
 
@@ -3704,13 +3714,17 @@ input:focus {
     grid-column: 1 / -1;
   }
 
-  /* 세 칸으로 나란히 둘 때는 폰 폭과 같은 열 너비로 */
+  /* 두 표를 나란히 둘 때도 평균 승점과 기존 숫자 칸을 유지한다. */
   #view[data-tab='players'] .players .c-num {
     width: 34px;
   }
 
   #view[data-tab='players'] .players .c-wdl {
     width: 54px;
+  }
+
+  #view[data-tab='players'] .players .c-avg {
+    width: 68px;
   }
 
   #view[data-tab='players'] .players .c-pts {

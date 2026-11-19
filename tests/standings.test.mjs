@@ -332,7 +332,7 @@ test('명단에 없는 팀·잘못된 티어·같은 팀끼리의 판은 경기�
   assert.equal(computeTeamStandings(TEAMS, bad).recordedGames, 0);
 });
 
-test('개인 기록은 승점 → 골득실 → 다득점 순으로 정렬하고, 셋 다 같으면 공동 순위', () => {
+test('개인 기록은 판당 평균 승점 → 판당 득실 → 판당 득점 순이며, 미경기는 마지막에 순위 없이 둔다', () => {
   const stats = computePlayerStats(TEAMS, [
     game(1, 2, 1, 3, 0),
     game(3, 4, 1, 1, 0),
@@ -341,7 +341,7 @@ test('개인 기록은 승점 → 골득실 → 다득점 순으로 정렬하고
   ]);
   assert.deepEqual(
     stats[1].map((p) => [p.name, p.rank]),
-    [['스톰', 1], ['레오', 2], ['우설', 2], ['병희', 4], ['뚝배기', 5], ['크카모', 6], ['하지', 6], ['태현', 8], ['범수', 9]],
+    [['스톰', 1], ['레오', 2], ['우설', 2], ['병희', 4], ['크카모', 5], ['하지', 5], ['태현', 7], ['범수', 8], ['뚝배기', null]],
   );
 });
 
@@ -358,4 +358,120 @@ test('playerRecord는 개인 탭과 같은 기준: 티어를 옮겨도 사람 �
   assert.deepEqual(playerRecord(TEAMS, games, '태현'), { w: 1, d: 0, l: 1, pts: 3, scored: 3, conceded: 3, diff: 0 });
   assert.deepEqual(playerRecord(TEAMS, games, '태풍'), { w: 0, d: 0, l: 0, pts: 0, scored: 0, conceded: 0, diff: 0 });
   assert.deepEqual(playerRecord(TEAMS, games, '없는사람'), { w: 0, d: 0, l: 0, pts: 0, scored: 0, conceded: 0, diff: 0 });
+});
+
+test('개인 평균 승점: 누적 4점인 2판 선수가 누적 6점인 4판 선수보다 앞선다', () => {
+  const rows = computePlayerStats(TEAMS, [
+    game(1, 7, 1, 1, 0),
+    game(1, 8, 1, 0, 0), // 스톰: 1승 1무, 2판 4점, 평균 2.00
+    game(3, 2, 1, 1, 0),
+    game(3, 4, 1, 1, 0),
+    game(3, 5, 1, 0, 1),
+    game(3, 6, 1, 0, 1), // 병희: 2승 2패, 4판 6점, 평균 1.50
+  ])[1];
+  assert.deepEqual(rows.filter((p) => ['스톰', '병희'].includes(p.name)).map((p) => p.name), ['스톰', '병희']);
+  const storm = rows.find((p) => p.name === '스톰');
+  const bh = rows.find((p) => p.name === '병희');
+  assert.deepEqual([storm.played, storm.pts, storm.avgPts], [2, 4, 2]);
+  assert.deepEqual([bh.played, bh.pts, bh.avgPts], [4, 6, 1.5]);
+});
+
+test('개인 평균 승점이 같으면 누적 득실보다 판당 득실을 먼저 비교한다', () => {
+  const rows = computePlayerStats(TEAMS, [
+    game(1, 2, 1, 2, 0),
+    game(1, 4, 1, 2, 0), // 스톰: 2판 +4, 판당 +2
+    game(3, 5, 1, 3, 0), // 병희: 1판 +3, 판당 +3
+  ])[1];
+  assert.deepEqual(rows.slice(0, 2).map((p) => [p.name, p.rank, p.avgPts, p.played, p.diff]), [
+    ['병희', 1, 3, 1, 3],
+    ['스톰', 2, 3, 2, 4],
+  ]);
+});
+
+test('개인 평균 승점과 평균 득실이 같으면 판당 득점으로 가른다', () => {
+  const rows = computePlayerStats(TEAMS, [
+    game(1, 2, 1, 3, 2),
+    game(1, 4, 1, 3, 2), // 스톰: 판당 3점, +1, 3득점(누적 6득점)
+    game(3, 5, 1, 4, 3), // 병희: 판당 3점, +1, 4득점(누적 4득점)
+  ])[1];
+  assert.deepEqual(rows.slice(0, 2).map((p) => [p.name, p.rank, p.played, p.scored, p.diff]), [
+    ['병희', 1, 1, 4, 1],
+    ['스톰', 2, 2, 6, 2],
+  ]);
+});
+
+test('개인 세 평균이 정확히 같으면 판수가 달라도 공동 2위이고 다음은 4위다', () => {
+  // 입력 명단을 뒤집어도 같은 순위 안에서는 팀번호 순서로 표시한다.
+  const rows = computePlayerStats([...TEAMS].reverse(), [
+    game(1, 2, 1, 4, 0), // 1위: 평균 승점 3, 득실 +4
+    game(3, 4, 1, 3, 1), // 병희: 1판 3점, +2, 3득점
+    game(5, 6, 1, 3, 1),
+    game(5, 7, 1, 3, 1), // 레오: 2판 6점, +4, 6득점 — 병희와 세 평균 동일
+    game(8, 9, 1, 2, 1), // 4위: 평균 승점 3, 득실 +1
+  ])[1];
+  assert.deepEqual(rows.slice(0, 4).map((p) => [p.name, p.rank]), [
+    ['스톰', 1], ['병희', 2], ['레오', 2], ['하지', 4],
+  ]);
+  assert.deepEqual(rows.filter((p) => ['병희', '레오'].includes(p.name)).map((p) => [p.played, p.pts, p.diff, p.scored]), [
+    [1, 3, 2, 3], [2, 6, 4, 6],
+  ]);
+});
+
+test('개인 평균 승점은 두 자리 표시가 같아도 반올림 전 비율로 정렬한다', () => {
+  // 17팀 예시는 1/8=0.125와 2/15=0.13333...를 만들기 위한 독립 자료다.
+  const teams = Array.from({ length: 17 }, (_, i) => ({
+    no: i + 1,
+    name: `예시팀${i + 1}`,
+    players: [`예시${i + 1}-1`, `예시${i + 1}-2`, `예시${i + 1}-3`],
+  }));
+  const makeGame = (a, b, ga, gb) => ({
+    a, b, tier: 1, ga, gb,
+    pa: teams[a - 1].players[0], pb: teams[b - 1].players[0],
+  });
+  const rows = computePlayerStats(teams, [
+    ...Array.from({ length: 8 }, (_, i) => makeGame(1, i + 3, 0, i === 0 ? 0 : 1)),
+    ...Array.from({ length: 15 }, (_, i) => makeGame(2, i + 3, 0, i < 2 ? 0 : 2)),
+  ])[1];
+  const lower = rows.find((p) => p.name === '예시1-1');
+  const higher = rows.find((p) => p.name === '예시2-1');
+  assert.deepEqual([lower.played, lower.pts, lower.avgPts], [8, 1, 0.125]);
+  assert.deepEqual([higher.played, higher.pts, higher.avgPts], [15, 2, 0.13333333333333333]);
+  assert.deepEqual([lower.avgPts.toFixed(2), higher.avgPts.toFixed(2)], ['0.13', '0.13']);
+  // 평균 득실은 1팀(-7/8)이 더 좋아도, 평균 승점이 높은 2팀이 먼저다.
+  assert.deepEqual(rows.filter((p) => ['예시1-1', '예시2-1'].includes(p.name)).map((p) => p.name), ['예시2-1', '예시1-1']);
+  assert.ok(higher.rank < lower.rank);
+});
+
+test('개인 0점 출전자는 미경기보다 앞서며 미경기의 평균과 순위는 null이다', () => {
+  const rows = computePlayerStats(TEAMS, [game(2, 3, 1, 0, 1)])[1];
+  assert.deepEqual(rows.slice(0, 3).map((p) => [p.name, p.rank, p.played, p.avgPts]), [
+    ['병희', 1, 1, 3], ['범수', 2, 1, 0], ['스톰', null, 0, null],
+  ]);
+  assert.deepEqual(rows.slice(2).map((p) => p.teamNo), [1, 4, 5, 6, 7, 8, 9]);
+  assert.ok(rows.slice(2).every((p) => p.rank === null && p.played === 0 && p.avgPts === null));
+});
+
+test('개인 전원 미경기는 명단을 유지하고 0분모 평균과 순위를 만들지 않는다', () => {
+  const stats = computePlayerStats(TEAMS, []);
+  for (const tier of TIERS) {
+    assert.equal(stats[tier].length, 9);
+    assert.deepEqual(stats[tier].map((p) => p.teamNo), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert.ok(stats[tier].every((p) => p.played === 0 && p.avgPts === null && p.rank === null));
+  }
+});
+
+test('개인 평균의 판수에는 앞선 선수가 뛴 판도 들어가고 개인 일정 합계는 그대로다', () => {
+  const teams = TEAMS.map((t) => t.no === 3 ? { ...t, players: ['일도', ...t.players.slice(1)] } : t);
+  const games = [
+    game(3, 1, 1, 3, 0), // 병희 승
+    game(2, 3, 1, 1, 1), // 병희 무
+    { ...game(3, 4, 1, 0, 2), pa: '일도' }, // 일도 패
+  ];
+  const rows = computePlayerStats(teams, games)[1];
+  assert.equal(rows.find((p) => p.name === '병희'), undefined);
+  const ido = rows.find((p) => p.name === '일도');
+  assert.deepEqual([ido.w, ido.d, ido.l, ido.played, ido.pts, ido.avgPts], [1, 1, 1, 3, 4, 1.3333333333333333]);
+  assert.deepEqual(ido.inherited, [{ name: '병희', opponent: 1 }, { name: '병희', opponent: 2 }]);
+  assert.deepEqual(playerRecord(teams, games, '일도'), { w: 1, d: 1, l: 1, pts: 4, scored: 4, conceded: 3, diff: 1 });
+  assert.deepEqual(games.map((g) => [g.pa, g.pb]), [['병희', '스톰'], ['범수', '병희'], ['일도', '태현']]);
 });
